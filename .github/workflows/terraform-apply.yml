@@ -1,17 +1,16 @@
 name: terraform-apply
 
 on:
-  push:
+  pull_request:
+    types:
+      - closed
     branches:
       - develop
       - stg
       - prod
-    paths:
-      - 'environments/**'
-      - 'modules/**'
 
 concurrency:
-  group: terraform-apply-${{ github.ref_name }}
+  group: terraform-apply-${{ github.base_ref }}
   cancel-in-progress: false
 
 permissions:
@@ -20,6 +19,7 @@ permissions:
 
 jobs:
   resolve-environment:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.resolve.outputs.environment }}
@@ -27,21 +27,21 @@ jobs:
       - name: Resolve target environment
         id: resolve
         run: |
-          case "${{ github.ref_name }}" in
+          case "${{ github.base_ref }}" in
             develop) echo "environment=dev"  >> "$GITHUB_OUTPUT" ;;
             stg)     echo "environment=stg"  >> "$GITHUB_OUTPUT" ;;
             prod)    echo "environment=prod" >> "$GITHUB_OUTPUT" ;;
             *)
-              echo "Unsupported branch: ${{ github.ref_name }}"
+              echo "Unsupported base branch: ${{ github.base_ref }}"
               exit 1
               ;;
           esac
 
   apply-non-prod:
     needs: resolve-environment
-    if: needs.resolve-environment.outputs.environment != 'prod'
+    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment != 'prod'
     runs-on: ubuntu-latest
-    # AWS_TERRAFORM_ROLE_ARN is set per GitHub Environment (dev/stg → separate IAM roles).
+
     environment: ${{ needs.resolve-environment.outputs.environment }}
 
     env:
@@ -49,8 +49,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configure AWS credentials OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
@@ -93,22 +95,19 @@ jobs:
           printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"          >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-  # prod is split into two jobs so reviewers can inspect the plan before approving apply.
-  # Flow: prod-plan runs automatically → reviewer sees plan in Step Summary →
-  #       reviewer approves prod-apply → saved tfplan is applied.
   prod-plan:
     needs: resolve-environment
-    if: needs.resolve-environment.outputs.environment == 'prod'
+    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'prod'
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configure AWS credentials OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # Repo-level plan-only role (read access; no approval gate needed for plan).
-          # prod-apply uses the prod Environment secret AWS_TERRAFORM_ROLE_ARN (write access).
           role-to-assume: ${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_PROD }}
           aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
 
@@ -139,7 +138,6 @@ jobs:
         with:
           name: tfplan-prod-${{ github.run_id }}
           path: environments/prod/tfplan
-          # Short retention: apply must be approved and run on the same day.
           retention-days: 1
           if-no-files-found: error
 
@@ -147,19 +145,19 @@ jobs:
     needs:
       - resolve-environment
       - prod-plan
-    if: needs.resolve-environment.outputs.environment == 'prod'
+    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'prod'
     runs-on: ubuntu-latest
-    # Required reviewers gate is configured on the prod GitHub Environment.
-    # Approvers can review the plan in prod-plan's Step Summary before approving here.
+
     environment: prod
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configure AWS credentials OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # AWS_TERRAFORM_ROLE_ARN is set in the prod GitHub Environment (write access).
           role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
 

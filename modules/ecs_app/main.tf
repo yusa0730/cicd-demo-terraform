@@ -14,7 +14,7 @@ resource "aws_cloudwatch_log_group" "app" {
 
 resource "aws_security_group" "ecs" {
   name        = "${var.name_prefix}-ecs-sg"
-  description = "ECS tasks — inbound from ALB, outbound to internet and RDS"
+  description = "ECS tasks - inbound from ALB, outbound to internet and RDS"
   vpc_id      = var.vpc_id
 
   ingress {

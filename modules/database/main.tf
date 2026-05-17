@@ -21,7 +21,7 @@ resource "aws_db_subnet_group" "this" {
 # Ingress rules are added at the environment level to avoid circular dependency with ecs_app module.
 resource "aws_security_group" "rds" {
   name        = "${var.name_prefix}-rds-sg"
-  description = "RDS — ingress rules managed by environment root"
+  description = "RDS - ingress rules managed by environment root"
   vpc_id      = var.vpc_id
 
   egress {
