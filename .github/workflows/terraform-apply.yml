@@ -1,0 +1,197 @@
+name: terraform-apply
+
+on:
+  push:
+    branches:
+      - develop
+      - stg
+      - prod
+    paths:
+      - 'environments/**'
+      - 'modules/**'
+
+concurrency:
+  group: terraform-apply-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  resolve-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+    steps:
+      - name: Resolve target environment
+        id: resolve
+        run: |
+          case "${{ github.ref_name }}" in
+            develop) echo "environment=dev"  >> "$GITHUB_OUTPUT" ;;
+            stg)     echo "environment=stg"  >> "$GITHUB_OUTPUT" ;;
+            prod)    echo "environment=prod" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "Unsupported branch: ${{ github.ref_name }}"
+              exit 1
+              ;;
+          esac
+
+  apply-non-prod:
+    needs: resolve-environment
+    if: needs.resolve-environment.outputs.environment != 'prod'
+    runs-on: ubuntu-latest
+    # AWS_TERRAFORM_ROLE_ARN is set per GitHub Environment (dev/stg → separate IAM roles).
+    environment: ${{ needs.resolve-environment.outputs.environment }}
+
+    env:
+      ENVIRONMENT: ${{ needs.resolve-environment.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Show plan in Step Summary
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: |
+          echo "### Terraform Plan — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform Apply
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show outputs
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: |
+          echo "### Terraform Outputs — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"        >> "$GITHUB_STEP_SUMMARY"
+          printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)"  >> "$GITHUB_STEP_SUMMARY"
+          printf "app_deploy_role_arn = %s\n" "$(terraform output -raw -no-color app_deploy_role_arn)" >> "$GITHUB_STEP_SUMMARY"
+          printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"          >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # prod is split into two jobs so reviewers can inspect the plan before approving apply.
+  # Flow: prod-plan runs automatically → reviewer sees plan in Step Summary →
+  #       reviewer approves prod-apply → saved tfplan is applied.
+  prod-plan:
+    needs: resolve-environment
+    if: needs.resolve-environment.outputs.environment == 'prod'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Repo-level plan-only role (read access; no approval gate needed for plan).
+          # prod-apply uses the prod Environment secret AWS_TERRAFORM_ROLE_ARN (write access).
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_PROD }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: environments/prod
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: environments/prod
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Show plan in Step Summary
+        working-directory: environments/prod
+        run: |
+          echo "### Terraform Plan — prod" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-prod-${{ github.run_id }}
+          path: environments/prod/tfplan
+          # Short retention: apply must be approved and run on the same day.
+          retention-days: 1
+          if-no-files-found: error
+
+  prod-apply:
+    needs: [resolve-environment, prod-plan]
+    if: needs.resolve-environment.outputs.environment == 'prod'
+    runs-on: ubuntu-latest
+    # Required reviewers gate is configured on the prod GitHub Environment.
+    # Approvers can review the plan in prod-plan's Step Summary before approving here.
+    environment: prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # AWS_TERRAFORM_ROLE_ARN is set in the prod GitHub Environment (write access).
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: environments/prod
+        run: terraform init
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-prod-${{ github.run_id }}
+          path: environments/prod
+
+      - name: Verify plan artifact exists
+        working-directory: environments/prod
+        run: test -f tfplan
+
+      - name: Terraform Apply
+        working-directory: environments/prod
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show outputs
+        working-directory: environments/prod
+        run: |
+          echo "### Terraform Outputs — prod" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"        >> "$GITHUB_STEP_SUMMARY"
+          printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)"  >> "$GITHUB_STEP_SUMMARY"
+          printf "app_deploy_role_arn = %s\n" "$(terraform output -raw -no-color app_deploy_role_arn)" >> "$GITHUB_STEP_SUMMARY"
+          printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"          >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
