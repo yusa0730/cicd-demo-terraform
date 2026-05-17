@@ -6,10 +6,6 @@ on:
       - develop
       - stg
       - prod
-    paths:
-      - "environments/**"
-      - "modules/**"
-      - ".github/workflows/terraform-plan.yml"
 
 concurrency:
   group: terraform-plan-${{ github.event.pull_request.number }}
@@ -53,7 +49,9 @@ jobs:
           esac
 
   plan:
-    needs: [fmt, resolve-environment]
+    needs:
+      - fmt
+      - resolve-environment
     runs-on: ubuntu-latest
 
     env:
@@ -114,6 +112,7 @@ jobs:
       - name: Post plan status to PR
         uses: actions/github-script@v7
         env:
+          ENVIRONMENT: ${{ env.ENVIRONMENT }}
           VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
           PLAN_OUTCOME: ${{ steps.plan.outcome }}
           SUMMARY_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

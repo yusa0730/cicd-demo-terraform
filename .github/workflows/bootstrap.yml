@@ -1,0 +1,128 @@
+name: bootstrap
+
+# One-time workflow to create the S3 bucket and IAM roles for the selected environment.
+# Run order:
+#   1. dev first (GitHub OIDC Provider is created here)
+#   2. stg later
+#   3. prod later
+#
+# After each run:
+#   1. Copy the role ARNs from Step Summary into GitHub Secrets / Environments.
+#   2. Delete AWS_BOOTSTRAP_ACCESS_KEY_ID and AWS_BOOTSTRAP_SECRET_ACCESS_KEY after all bootstrap work is done.
+#   3. Delete the temporary IAM user in AWS Console.
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: "Target environment to bootstrap"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+        default: dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-${{ github.event.inputs.target_environment }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.target_environment }}
+      AWS_REGION: ap-northeast-1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (temporary bootstrap user)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_BOOTSTRAP_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_BOOTSTRAP_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure S3 bucket for Terraform state
+        run: |
+          BUCKET="cicd-demo-terraform-${ENVIRONMENT}"
+
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "$BUCKET already exists, skipping create"
+          else
+            aws s3api create-bucket \
+              --bucket "$BUCKET" \
+              --region "$AWS_REGION" \
+              --create-bucket-configuration LocationConstraint="$AWS_REGION"
+            echo "Created $BUCKET"
+          fi
+
+          aws s3api put-bucket-versioning \
+            --bucket "$BUCKET" \
+            --versioning-configuration Status=Enabled
+
+          aws s3api put-public-access-block \
+            --bucket "$BUCKET" \
+            --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+          aws s3api put-bucket-encryption \
+            --bucket "$BUCKET" \
+            --server-side-encryption-configuration '{
+              "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
+            }'
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Bootstrap selected environment
+        id: bootstrap
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: |
+          terraform init
+          terraform apply -auto-approve
+          echo "terraform_role_arn=$(terraform output -raw terraform_role_arn)"     >> "$GITHUB_OUTPUT"
+          echo "app_deploy_role_arn=$(terraform output -raw app_deploy_role_arn)"   >> "$GITHUB_OUTPUT"
+
+      - name: Show next steps in Step Summary
+        env:
+          TERRAFORM_ROLE_ARN: ${{ steps.bootstrap.outputs.terraform_role_arn }}
+          APP_DEPLOY_ROLE_ARN: ${{ steps.bootstrap.outputs.app_deploy_role_arn }}
+        run: |
+          UPPER_ENV=$(echo "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Bootstrap 完了 — ${ENVIRONMENT}
+
+          ### 1. Terraform repo の Repository Secrets に登録
+
+          | Secret 名 | 値 |
+          |-----------|---|
+          | \`AWS_TERRAFORM_PLAN_ROLE_ARN_${UPPER_ENV}\` | \`${TERRAFORM_ROLE_ARN}\` |
+
+          ### 2. Terraform repo の GitHub Environment \`${ENVIRONMENT}\` に登録
+
+          | Environment | Secret 名 | 値 |
+          |------------|-----------|---|
+          | \`${ENVIRONMENT}\` | \`AWS_TERRAFORM_ROLE_ARN\` | \`${TERRAFORM_ROLE_ARN}\` |
+
+          ### 3. app-repo の GitHub Environment \`${ENVIRONMENT}\` に登録
+
+          | Environment | Secret 名 | 値 |
+          |------------|-----------|---|
+          | \`${ENVIRONMENT}\` | \`AWS_DEPLOY_ROLE_ARN\` | \`${APP_DEPLOY_ROLE_ARN}\` |
+
+          ### 4. 後片付け（全環境の bootstrap 完了後）
+
+          - Terraform repo の Repository Secrets から \`AWS_BOOTSTRAP_ACCESS_KEY_ID\` を削除
+          - Terraform repo の Repository Secrets から \`AWS_BOOTSTRAP_SECRET_ACCESS_KEY\` を削除
+          - AWS Console の bootstrap 用 IAM User を削除
+          EOF

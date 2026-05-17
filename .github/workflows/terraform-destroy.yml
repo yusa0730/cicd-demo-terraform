@@ -1,0 +1,158 @@
+name: terraform-destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: "Target environment to destroy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+        default: dev
+      confirm:
+        description: "Type destroy to confirm"
+        required: true
+        type: string
+
+concurrency:
+  group: terraform-destroy-${{ github.event.inputs.target_environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate-input:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.validate.outputs.environment }}
+    steps:
+      - name: Validate confirmation
+        id: validate
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.target_environment }}"
+          CONFIRM="${{ github.event.inputs.confirm }}"
+
+          if [ "$CONFIRM" != "destroy" ]; then
+            echo "You must type 'destroy' to continue."
+            exit 1
+          fi
+
+          case "$ENVIRONMENT" in
+            dev|stg|prod)
+              echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported environment: $ENVIRONMENT"
+              exit 1
+              ;;
+          esac
+
+  destroy-plan:
+    needs: validate-input
+    runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ needs.validate-input.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select IAM role for destroy plan
+        id: role
+        run: |
+          case "$ENVIRONMENT" in
+            dev)  echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_DEV }}"  >> "$GITHUB_OUTPUT" ;;
+            stg)  echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_STG }}"  >> "$GITHUB_OUTPUT" ;;
+            prod) echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_PROD }}" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "Unsupported environment: $ENVIRONMENT"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure AWS credentials for destroy plan
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.arn }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: terraform init
+
+      - name: Terraform Destroy Plan
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: terraform plan -destroy -no-color -out=tfplan
+
+      - name: Show destroy plan in Step Summary
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: |
+          echo "### Terraform Destroy Plan — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload destroy plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-destroy-${{ env.ENVIRONMENT }}-${{ github.run_id }}
+          path: environments/${{ env.ENVIRONMENT }}/tfplan
+          retention-days: 1
+          if-no-files-found: error
+
+  destroy-apply:
+    needs:
+      - validate-input
+      - destroy-plan
+    runs-on: ubuntu-latest
+
+    # Required reviewers should be configured on each GitHub Environment.
+    # For practice, you can set required reviewers on dev as well.
+    environment: ${{ needs.validate-input.outputs.environment }}
+
+    env:
+      ENVIRONMENT: ${{ needs.validate-input.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials for destroy apply
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: terraform init
+
+      - name: Download destroy plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-destroy-${{ env.ENVIRONMENT }}-${{ github.run_id }}
+          path: environments/${{ env.ENVIRONMENT }}
+
+      - name: Verify destroy plan artifact exists
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: test -f tfplan
+
+      - name: Terraform Apply Destroy Plan
+        working-directory: environments/${{ env.ENVIRONMENT }}
+        run: terraform apply -auto-approve tfplan

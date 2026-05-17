@@ -144,7 +144,9 @@ jobs:
           if-no-files-found: error
 
   prod-apply:
-    needs: [resolve-environment, prod-plan]
+    needs:
+      - resolve-environment
+      - prod-plan
     if: needs.resolve-environment.outputs.environment == 'prod'
     runs-on: ubuntu-latest
     # Required reviewers gate is configured on the prod GitHub Environment.
