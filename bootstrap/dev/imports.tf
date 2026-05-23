@@ -1,1 +1,1 @@
-# No existing resources to import for dev.
+# No imports needed. State bucket and env state bucket are separate.
