@@ -64,6 +64,7 @@ resource "aws_security_group_rule" "ecs_to_rds" {
   protocol                 = "tcp"
   source_security_group_id = module.ecs_app.ecs_security_group_id
   security_group_id        = module.database.rds_security_group_id
+  description              = "Allow PostgreSQL from ECS tasks"
 }
 
 # SSM Parameter Store — values published for app-repo CI to consume
@@ -84,6 +85,6 @@ resource "aws_ssm_parameter" "infra" {
   for_each = local.ssm_params
 
   name  = "${local.ssm_prefix}/${each.key}"
-  type  = "String"
+  type  = "SecureString"
   value = each.value
 }

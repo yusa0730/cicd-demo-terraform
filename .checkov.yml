@@ -1,0 +1,44 @@
+framework:
+  - terraform
+
+skip-check:
+  # Demo does not configure custom domain / ACM / HTTPS listener.
+  - CKV_AWS_2
+  - CKV_AWS_103
+  - CKV_AWS_378
+  - CKV2_AWS_20
+
+  # Demo does not configure WAF.
+  - CKV2_AWS_28
+
+  # ALB access logs require a dedicated S3 log bucket; out of scope for this demo.
+  - CKV_AWS_91
+
+  # ALB and RDS deletion protection disabled to support destroy workflows in dev/stg.
+  - CKV_AWS_150
+  - CKV_AWS_293
+
+  # RDS Multi-AZ disabled in dev/stg for cost; production should enforce this separately.
+  - CKV_AWS_157
+
+  # Secrets rotation is out of scope for this CI/CD demo.
+  - CKV2_AWS_57
+  - CKV_AWS_149
+
+  # App uses password-based authentication; RDS IAM authentication not configured.
+  - CKV_AWS_161
+
+  # ECS read-only root filesystem: app container requires write access at runtime.
+  - CKV_AWS_211
+
+  # ECS task definition non-root user: depends on app image build, not Terraform scope.
+  - CKV_AWS_336
+
+  # VPC Flow Logs: out of scope for this CI/CD demo.
+  - CKV2_AWS_11
+
+  # RDS enhanced monitoring: out of scope for this CI/CD demo.
+  - CKV_AWS_118
+
+  # Secrets Manager secret recovery window is 0 to allow fast teardown in dev/stg.
+  - CKV_AWS_303

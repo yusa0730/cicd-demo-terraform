@@ -8,6 +8,7 @@ resource "aws_security_group" "alb" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow HTTP from internet"
   }
 
   egress {
@@ -15,6 +16,7 @@ resource "aws_security_group" "alb" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
   }
 
   tags = { Name = "${var.name_prefix}-alb-sg" }
@@ -26,6 +28,8 @@ resource "aws_lb" "this" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = var.public_subnet_ids
+
+  drop_invalid_header_fields = true
 }
 
 resource "aws_lb_target_group" "this" {
@@ -45,6 +49,9 @@ resource "aws_lb_target_group" "this" {
 }
 
 resource "aws_lb_listener" "http" {
+  #checkov:skip=CKV_AWS_2: Demo environment uses HTTP because ACM/custom domain is out of scope
+  #checkov:skip=CKV_AWS_103: TLS listener not configured; HTTPS is out of scope for this demo
+  #checkov:skip=CKV2_AWS_20: HTTP to HTTPS redirect is out of scope for this demo
   load_balancer_arn = aws_lb.this.arn
   port              = 80
   protocol          = "HTTP"

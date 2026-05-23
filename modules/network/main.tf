@@ -76,3 +76,8 @@ resource "aws_route_table_association" "private" {
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private.id
 }
+
+# Restrict the default VPC security group — no ingress or egress rules.
+resource "aws_default_security_group" "this" {
+  vpc_id = aws_vpc.this.id
+}

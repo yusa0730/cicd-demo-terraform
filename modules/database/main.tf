@@ -29,6 +29,7 @@ resource "aws_security_group" "rds" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
   }
 
   tags = { Name = "${var.name_prefix}-rds-sg" }
@@ -50,6 +51,12 @@ resource "aws_db_instance" "this" {
   multi_az                = false
   publicly_accessible     = false
   backup_retention_period = var.backup_retention_period
+
+  storage_encrypted          = true
+  auto_minor_version_upgrade = true
+  copy_tags_to_snapshot      = true
+
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
 
   tags = { Name = "${var.name_prefix}-db" }
 }

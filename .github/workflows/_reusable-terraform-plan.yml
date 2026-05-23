@@ -90,10 +90,10 @@ jobs:
       - name: Run trivy
         id: trivy
         uses: aquasecurity/trivy-action@v0.36.0
-        continue-on-error: true
         with:
           scan-type: config
           scan-ref: ${{ inputs.working_directory }}
+          tf-vars: ${{ inputs.working_directory }}/terraform.tfvars
           exit-code: "1"
           format: table
           output: /tmp/trivy-output.txt
@@ -102,41 +102,43 @@ jobs:
         if: always()
         run: |
           if [ "${{ steps.trivy.outcome }}" = "success" ]; then
-            echo "### trivy — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Trivy — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
             echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### trivy — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Trivy — $ENVIRONMENT ❌" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            if [ -f /tmp/trivy-output.txt ]; then
-              cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "trivy did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
-            fi
+            cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY" || echo "trivy did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Run checkov
         id: checkov
+        if: always()
         working-directory: ${{ inputs.working_directory }}
-        continue-on-error: true
         run: |
-          checkov -d . --quiet --framework terraform 2>&1 | tee /tmp/checkov-output.txt
+          checkov -d . --quiet --framework terraform \
+            --config-file "$GITHUB_WORKSPACE/.checkov.yml" \
+            2>&1 | tee /tmp/checkov-output.txt
 
       - name: Show checkov results in Step Summary
         if: always()
         run: |
           if [ "${{ steps.checkov.outcome }}" = "success" ]; then
-            echo "### checkov — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Checkov — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
             echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### checkov — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Checkov — $ENVIRONMENT ❌" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            if [ -f /tmp/checkov-output.txt ]; then
-              cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "checkov did not run or did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
-            fi
+            cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY" || echo "checkov did not run or did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fail if any security scan failed
+        if: always()
+        run: |
+          if [ "${{ steps.trivy.outcome }}" = "failure" ] || [ "${{ steps.checkov.outcome }}" = "failure" ]; then
+            echo "Security scan failed. See Step Summary for details."
+            exit 1
           fi
 
       # --- plan ---
