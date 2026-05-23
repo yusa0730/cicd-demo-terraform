@@ -16,17 +16,43 @@ terraform:
 
       {{ .Result }}
 
-      {{- if .Body }}
+      {{- if .ChangedResult }}
+
       <details><summary>詳細を展開</summary>
 
-      ```
-      {{ .Body }}
-      ```
+      {{ wrapCode .ChangedResult }}
 
       </details>
       {{- end }}
 
+      {{- if .ChangeOutsideTerraform }}
+
+      <details><summary>Terraform外で変更されたリソース</summary>
+
+      {{ wrapCode .ChangeOutsideTerraform }}
+
+      </details>
+      {{- end }}
+
+      {{- if .Warning }}
+
+      ## Warnings
+
+      {{ wrapCode .Warning }}
+      {{- end }}
+
+      {{- if .ErrorMessages }}
+
+      ## Errors
+      {{- range .ErrorMessages }}
+      - {{ . }}
+      {{- end }}
+      {{- end }}
+
+      {{- if .Link }}
+
       [詳細は Actions の Step Summary を参照]({{ .Link }})
+      {{- end }}
 
     when_add_or_update_only:
       label: "terraform:changed"
