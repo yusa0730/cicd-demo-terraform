@@ -62,42 +62,42 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
-      - name: Install tools (tfsec / checkov / tfcmt / conftest)
+      - name: Install tools (trivy / checkov / tfcmt / conftest)
         run: |
-          # tfsec
-          curl -sL https://github.com/aquasecurity/tfsec/releases/download/v1.28.11/tfsec-linux-amd64 \
-            -o /tmp/tfsec && chmod +x /tmp/tfsec && sudo mv /tmp/tfsec /usr/local/bin/tfsec
+          # trivy（tfsec の後継。IaC セキュリティスキャン）
+          curl --fail -sL https://github.com/aquasecurity/trivy/releases/download/v0.57.1/trivy_0.57.1_Linux-64bit.tar.gz \
+            | tar xz trivy && sudo mv trivy /usr/local/bin/trivy
 
           # checkov
           pip install --quiet checkov
 
           # tfcmt
-          curl -sL https://github.com/suzuki-shunsuke/tfcmt/releases/download/v4.14.0/tfcmt_linux_amd64.tar.gz \
+          curl --fail -sL https://github.com/suzuki-shunsuke/tfcmt/releases/download/v4.13.0/tfcmt_linux_amd64.tar.gz \
             | tar xz tfcmt && sudo mv tfcmt /usr/local/bin/tfcmt
 
           # conftest
-          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
+          curl --fail -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
             | tar xz conftest && sudo mv conftest /usr/local/bin/conftest
 
       # --- 静的解析（terraform init 不要）---
 
-      - name: Run tfsec
-        id: tfsec
+      - name: Run trivy
+        id: trivy
         working-directory: ${{ inputs.working_directory }}
         continue-on-error: true
         run: |
-          tfsec . --no-colour 2>&1 | tee /tmp/tfsec-output.txt
+          trivy config . --exit-code 1 2>&1 | tee /tmp/trivy-output.txt
 
-      - name: Show tfsec results in Step Summary
+      - name: Show trivy results in Step Summary
         if: always()
         run: |
-          if [ "${{ steps.tfsec.outcome }}" = "success" ]; then
-            echo "### tfsec — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.trivy.outcome }}" = "success" ]; then
+            echo "### trivy — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
             echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### tfsec — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
+            echo "### trivy — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat /tmp/tfsec-output.txt >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
