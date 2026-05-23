@@ -88,9 +88,10 @@ jobs:
       # --- 静的解析（terraform init 不要）---
 
       - name: Setup Trivy
-        uses: aquasecurity/setup-trivy@v0.2.0
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
         with:
           version: v0.70.0
+          cache: true
 
       - name: Run Trivy config scan
         id: trivy
