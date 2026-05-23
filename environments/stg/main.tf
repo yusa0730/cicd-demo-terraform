@@ -40,9 +40,9 @@ module "alb" {
 module "ecs_app" {
   source = "../../modules/ecs_app"
 
-  name_prefix    = local.name_prefix
-  aws_region     = var.aws_region
-  vpc_id         = module.network.vpc_id
+  name_prefix           = local.name_prefix
+  aws_region            = var.aws_region
+  vpc_id                = module.network.vpc_id
   private_subnet_ids    = module.network.private_subnet_ids
   alb_security_group_id = module.alb.alb_security_group_id
   target_group_arn      = module.alb.target_group_arn
@@ -69,14 +69,14 @@ resource "aws_security_group_rule" "ecs_to_rds" {
 # SSM Parameter Store — values published for app-repo CI to consume
 locals {
   ssm_params = {
-    ecr-repository-url         = module.ecr.repository_url
-    ecs-cluster-name           = module.ecs_app.cluster_name
-    ecs-service-name           = module.ecs_app.service_name
-    task-definition-family     = module.ecs_app.task_definition_family
-    migration-task-def-arn     = module.ecs_app.migration_task_definition_arn
-    ecs-subnet-ids             = join(",", module.network.private_subnet_ids)
-    ecs-security-group-id      = module.ecs_app.ecs_security_group_id
-    alb-dns-name               = module.alb.alb_dns_name
+    ecr-repository-url     = module.ecr.repository_url
+    ecs-cluster-name       = module.ecs_app.cluster_name
+    ecs-service-name       = module.ecs_app.service_name
+    task-definition-family = module.ecs_app.task_definition_family
+    migration-task-def-arn = module.ecs_app.migration_task_definition_arn
+    ecs-subnet-ids         = join(",", module.network.private_subnet_ids)
+    ecs-security-group-id  = module.ecs_app.ecs_security_group_id
+    alb-dns-name           = module.alb.alb_dns_name
   }
 }
 
