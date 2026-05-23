@@ -42,3 +42,12 @@ skip-check:
 
   # Secrets Manager secret recovery window is 0 to allow fast teardown in dev/stg.
   - CKV_AWS_303
+
+  # ALB is intentionally public over HTTP because ACM/custom domain is out of scope for this demo.
+  - CKV_AWS_260
+
+  # RDS Performance Insights disabled in demo environments to reduce cost.
+  - CKV_AWS_353
+
+  # PostgreSQL query logging via custom DB parameter group is out of scope for this CI/CD demo.
+  - CKV2_AWS_30

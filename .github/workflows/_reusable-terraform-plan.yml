@@ -87,40 +87,46 @@ jobs:
 
       # --- 静的解析（terraform init 不要）---
 
-      - name: Run trivy
-        id: trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Setup Trivy
+        uses: aquasecurity/setup-trivy@v0.2.0
         with:
-          scan-type: config
-          scan-ref: ${{ inputs.working_directory }}
-          tf-vars: ${{ inputs.working_directory }}/terraform.tfvars
-          exit-code: "1"
-          format: table
-          output: /tmp/trivy-output.txt
+          version: v0.70.0
 
-      - name: Show trivy results in Step Summary
-        if: always()
+      - name: Run Trivy config scan
+        id: trivy
         run: |
-          if [ "${{ steps.trivy.outcome }}" = "success" ]; then
+          set +e
+          trivy config \
+            --tf-vars environments/${{ env.ENVIRONMENT }}/terraform.tfvars \
+            --format table \
+            --exit-code 1 \
+            --output /tmp/trivy-output.txt \
+            environments/${{ env.ENVIRONMENT }}
+          TRIVY_EXIT_CODE=$?
+
+          if [ "$TRIVY_EXIT_CODE" -eq 0 ]; then
             echo "### Trivy — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
             echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "### Trivy — $ENVIRONMENT ❌" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY" || echo "trivy did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY" || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
+          cat /tmp/trivy-output.txt || true
+          exit "$TRIVY_EXIT_CODE"
 
-      - name: Run checkov
+      - name: Run Checkov
         id: checkov
         if: always()
         working-directory: ${{ inputs.working_directory }}
         run: |
+          set -o pipefail
           checkov -d . --quiet --framework terraform \
             --config-file "$GITHUB_WORKSPACE/.checkov.yml" \
             2>&1 | tee /tmp/checkov-output.txt
 
-      - name: Show checkov results in Step Summary
+      - name: Show Checkov results in Step Summary
         if: always()
         run: |
           if [ "${{ steps.checkov.outcome }}" = "success" ]; then
@@ -131,14 +137,6 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY" || echo "checkov did not run or did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Fail if any security scan failed
-        if: always()
-        run: |
-          if [ "${{ steps.trivy.outcome }}" = "failure" ] || [ "${{ steps.checkov.outcome }}" = "failure" ]; then
-            echo "Security scan failed. See Step Summary for details."
-            exit 1
           fi
 
       # --- plan ---

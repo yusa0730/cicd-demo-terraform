@@ -10,6 +10,7 @@ resource "aws_ecs_cluster" "this" {
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/ecs/${var.name_prefix}/app"
   retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
 }
 
 resource "aws_security_group" "ecs" {
@@ -23,14 +24,6 @@ resource "aws_security_group" "ecs" {
     protocol        = "tcp"
     security_groups = [var.alb_security_group_id]
     description     = "Allow inbound from ALB"
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Allow all outbound traffic"
   }
 
   tags = { Name = "${var.name_prefix}-ecs-sg" }
