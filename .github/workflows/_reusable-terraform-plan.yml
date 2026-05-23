@@ -39,7 +39,7 @@ jobs:
       ENVIRONMENT: ${{ inputs.environment }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Select IAM role
         id: role
@@ -55,13 +55,13 @@ jobs:
           esac
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6.1.1
         with:
           role-to-assume: ${{ steps.role.outputs.arn }}
           aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4.0.1
         with:
           terraform_version: "1.15.3"
           terraform_wrapper: false
