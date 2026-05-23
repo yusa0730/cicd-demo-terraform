@@ -62,22 +62,28 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
-      - name: Install tools (checkov / tfcmt / conftest)
-        run: |
-          # checkov
-          pip install --quiet checkov
+      - name: Install checkov
+        run: python3 -m pip install --quiet checkov
 
-          # tfcmt（ファイルに保存してから展開）
-          curl --fail -sL -o /tmp/tfcmt.tar.gz \
-            https://github.com/suzuki-shunsuke/tfcmt/releases/download/v4.13.0/tfcmt_linux_amd64.tar.gz
+      - name: Install tfcmt
+        run: |
+          set -euxo pipefail
+          TFCMT_VERSION="v4.14.13"
+          curl --fail --location --show-error -o /tmp/tfcmt.tar.gz \
+            "https://github.com/suzuki-shunsuke/tfcmt/releases/download/${TFCMT_VERSION}/tfcmt_linux_amd64.tar.gz"
           tar xzf /tmp/tfcmt.tar.gz tfcmt
           sudo mv tfcmt /usr/local/bin/tfcmt
+          tfcmt --version
 
-          # conftest（ファイルに保存してから展開）
-          curl --fail -sL -o /tmp/conftest.tar.gz \
-            https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz
+      - name: Install conftest
+        run: |
+          set -euxo pipefail
+          CONFTEST_VERSION="0.68.2"
+          curl --fail --location --show-error -o /tmp/conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
           tar xzf /tmp/conftest.tar.gz conftest
           sudo mv conftest /usr/local/bin/conftest
+          conftest --version
 
       # --- 静的解析（terraform init 不要）---
 
@@ -125,7 +131,11 @@ jobs:
           else
             echo "### checkov — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY"
+            if [ -f /tmp/checkov-output.txt ]; then
+              cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "checkov did not run or did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
