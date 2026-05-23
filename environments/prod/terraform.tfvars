@@ -29,6 +29,3 @@ desired_count = 2
 
 app_image_uri = "public.ecr.aws/nginx/nginx:latest"
 
-github_org      = "yusa0730"
-github_repo     = "cicd-demo-terraform"
-app_github_repo = "cicd-demo-backend"

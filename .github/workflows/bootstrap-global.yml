@@ -1,0 +1,123 @@
+name: bootstrap-global
+
+# One-time workflow to create OIDC Provider, IAM roles, and S3 state buckets.
+# Run this once before using any other workflow.
+# After completion: register the output ARNs in GitHub Secrets / Environments, then delete
+# AWS_BOOTSTRAP_ACCESS_KEY_ID / AWS_BOOTSTRAP_SECRET_ACCESS_KEY from Repository Secrets.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-global
+  cancel-in-progress: false
+
+jobs:
+  bootstrap-global:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ap-northeast-1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (temporary bootstrap user)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_BOOTSTRAP_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_BOOTSTRAP_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure global state bucket
+        run: |
+          BUCKET="cicd-demo-terraform-global"
+
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "$BUCKET already exists"
+          else
+            aws s3api create-bucket \
+              --bucket "$BUCKET" \
+              --region "$AWS_REGION" \
+              --create-bucket-configuration LocationConstraint="$AWS_REGION"
+            echo "Created $BUCKET"
+          fi
+
+          aws s3api put-bucket-versioning \
+            --bucket "$BUCKET" \
+            --versioning-configuration Status=Enabled
+
+          aws s3api put-public-access-block \
+            --bucket "$BUCKET" \
+            --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+          aws s3api put-bucket-encryption \
+            --bucket "$BUCKET" \
+            --server-side-encryption-configuration '{
+              "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
+            }'
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.3"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: bootstrap/global
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: bootstrap/global
+        run: terraform apply -auto-approve
+
+      - name: Show next steps in Step Summary
+        working-directory: bootstrap/global
+        run: |
+          PLAN_DEV=$(terraform output -json terraform_plan_role_arns  | jq -r '.dev')
+          PLAN_STG=$(terraform output -json terraform_plan_role_arns  | jq -r '.stg')
+          PLAN_PROD=$(terraform output -json terraform_plan_role_arns | jq -r '.prod')
+          APPLY_DEV=$(terraform output -json terraform_apply_role_arns  | jq -r '.dev')
+          APPLY_STG=$(terraform output -json terraform_apply_role_arns  | jq -r '.stg')
+          APPLY_PROD=$(terraform output -json terraform_apply_role_arns | jq -r '.prod')
+          DEPLOY_DEV=$(terraform output -json app_deploy_role_arns  | jq -r '.dev')
+          DEPLOY_STG=$(terraform output -json app_deploy_role_arns  | jq -r '.stg')
+          DEPLOY_PROD=$(terraform output -json app_deploy_role_arns | jq -r '.prod')
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Bootstrap Global 完了
+
+          ### 1. terraform-repo Repository Secrets
+
+          | Secret 名 | 値 |
+          |-----------|---|
+          | \`AWS_TERRAFORM_PLAN_ROLE_ARN_DEV\`  | \`${PLAN_DEV}\`  |
+          | \`AWS_TERRAFORM_PLAN_ROLE_ARN_STG\`  | \`${PLAN_STG}\`  |
+          | \`AWS_TERRAFORM_PLAN_ROLE_ARN_PROD\` | \`${PLAN_PROD}\` |
+
+          ### 2. terraform-repo GitHub Environments
+
+          | Environment | Secret 名 | 値 |
+          |------------|-----------|---|
+          | \`dev\`  | \`AWS_TERRAFORM_ROLE_ARN\` | \`${APPLY_DEV}\`  |
+          | \`stg\`  | \`AWS_TERRAFORM_ROLE_ARN\` | \`${APPLY_STG}\`  |
+          | \`prod\` | \`AWS_TERRAFORM_ROLE_ARN\` | \`${APPLY_PROD}\` |
+
+          ### 3. app-repo GitHub Environments
+
+          | Environment | Secret 名 | 値 |
+          |------------|-----------|---|
+          | \`dev\`  | \`AWS_DEPLOY_ROLE_ARN\` | \`${DEPLOY_DEV}\`  |
+          | \`stg\`  | \`AWS_DEPLOY_ROLE_ARN\` | \`${DEPLOY_STG}\`  |
+          | \`prod\` | \`AWS_DEPLOY_ROLE_ARN\` | \`${DEPLOY_PROD}\` |
+
+          ### 4. 後片付け（登録完了後）
+
+          - Repository Secrets から \`AWS_BOOTSTRAP_ACCESS_KEY_ID\` を削除
+          - Repository Secrets から \`AWS_BOOTSTRAP_SECRET_ACCESS_KEY\` を削除
+          - AWS Console の bootstrap 用 IAM User を削除
+          - \`bootstrap/global/imports.tf\` を削除してコミット
+          EOF

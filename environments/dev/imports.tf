@@ -1,4 +1,1 @@
-import {
-  to = aws_iam_openid_connect_provider.github
-  id = "arn:aws:iam::218317313594:oidc-provider/token.actions.githubusercontent.com"
-}
+# OIDC Provider import has been moved to bootstrap/global/imports.tf.

@@ -55,16 +55,3 @@ variable "app_image_uri" {
   default = "public.ecr.aws/nginx/nginx:latest"
 }
 
-variable "github_org" {
-  type = string
-}
-
-variable "github_repo" {
-  description = "terraform-repo name"
-  type        = string
-}
-
-variable "app_github_repo" {
-  description = "app-repo name"
-  type        = string
-}
