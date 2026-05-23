@@ -62,31 +62,35 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
-      - name: Install tools (trivy / checkov / tfcmt / conftest)
+      - name: Install tools (checkov / tfcmt / conftest)
         run: |
-          # trivy（tfsec の後継。IaC セキュリティスキャン）
-          curl --fail -sL https://github.com/aquasecurity/trivy/releases/download/v0.57.1/trivy_0.57.1_Linux-64bit.tar.gz \
-            | tar xz trivy && sudo mv trivy /usr/local/bin/trivy
-
           # checkov
           pip install --quiet checkov
 
-          # tfcmt
-          curl --fail -sL https://github.com/suzuki-shunsuke/tfcmt/releases/download/v4.13.0/tfcmt_linux_amd64.tar.gz \
-            | tar xz tfcmt && sudo mv tfcmt /usr/local/bin/tfcmt
+          # tfcmt（ファイルに保存してから展開）
+          curl --fail -sL -o /tmp/tfcmt.tar.gz \
+            https://github.com/suzuki-shunsuke/tfcmt/releases/download/v4.13.0/tfcmt_linux_amd64.tar.gz
+          tar xzf /tmp/tfcmt.tar.gz tfcmt
+          sudo mv tfcmt /usr/local/bin/tfcmt
 
-          # conftest
-          curl --fail -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
-            | tar xz conftest && sudo mv conftest /usr/local/bin/conftest
+          # conftest（ファイルに保存してから展開）
+          curl --fail -sL -o /tmp/conftest.tar.gz \
+            https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz
+          tar xzf /tmp/conftest.tar.gz conftest
+          sudo mv conftest /usr/local/bin/conftest
 
       # --- 静的解析（terraform init 不要）---
 
       - name: Run trivy
         id: trivy
-        working-directory: ${{ inputs.working_directory }}
+        uses: aquasecurity/trivy-action@0.28.0
         continue-on-error: true
-        run: |
-          trivy config . --exit-code 1 2>&1 | tee /tmp/trivy-output.txt
+        with:
+          scan-type: config
+          scan-ref: ${{ inputs.working_directory }}
+          exit-code: "1"
+          format: table
+          output: /tmp/trivy-output.txt
 
       - name: Show trivy results in Step Summary
         if: always()
