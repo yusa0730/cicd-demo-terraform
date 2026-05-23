@@ -1,0 +1,75 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git diff*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git checkout*)",
+      "Bash(git branch*)",
+      "Bash(terraform fmt*)",
+      "Bash(terraform validate*)",
+      "Bash(terraform plan*)",
+      "Bash(terraform init*)",
+      "Bash(terraform show*)",
+      "Bash(terraform output*)",
+      "Bash(checkov*)",
+      "Bash(trivy config*)",
+      "Bash(conftest test*)",
+      "Bash(find*)",
+      "Bash(grep*)",
+      "Bash(cat*)",
+      "Bash(ls*)",
+      "Read",
+      "Edit",
+      "Write",
+      "Grep",
+      "Glob"
+    ],
+    "deny": [
+      "Bash(terraform apply*)",
+      "Bash(terraform destroy*)",
+      "Bash(terraform state rm*)",
+      "Bash(terraform state push*)",
+      "Bash(terraform state mv*)",
+      "Bash(terraform force-unlock*)",
+      "Bash(terraform import*)",
+      "Bash(aws iam delete*)",
+      "Bash(aws iam put-role-policy*)",
+      "Bash(aws s3 rb*)",
+      "Bash(aws s3 rm*)",
+      "Bash(aws kms delete*)",
+      "Bash(aws kms disable*)",
+      "Bash(rm -rf*)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if find . -name '*.tf' -newer /tmp/.last_fmt_check 2>/dev/null | grep -q .; then terraform fmt -recursive . >/dev/null 2>&1 || true; fi; touch /tmp/.last_fmt_check"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/block_dangerous_commands.py"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,8 +1,5 @@
 # Terraform変更はインフラ管理Teamのreviewが必要
-# @your-org/infra-approvers を実際のTeam名に置き換えてください。
-# TeamはCODEOWNERS指定前にこのrepositoryへのwrite権限とvisible設定が必要です。
-
-/environments/      @your-org/infra-approvers
-/modules/           @your-org/infra-approvers
-/.github/workflows/ @your-org/infra-approvers
-/.github/CODEOWNERS @your-org/infra-approvers
+/environments/      @yusa0730
+/modules/           @yusa0730
+/.github/workflows/ @yusa0730
+/.github/CODEOWNERS @yusa0730
