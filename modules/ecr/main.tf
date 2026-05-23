@@ -1,6 +1,11 @@
 resource "aws_ecr_repository" "this" {
   name                 = var.name_prefix
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
+
+  encryption_configuration {
+    encryption_type = "KMS"
+    kms_key         = var.kms_key_arn
+  }
 
   image_scanning_configuration {
     scan_on_push = true
