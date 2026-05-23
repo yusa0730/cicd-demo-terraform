@@ -51,8 +51,8 @@ resource "aws_db_instance" "this" {
 
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
 
-  performance_insights_enabled          = true
-  performance_insights_kms_key_id       = var.kms_key_arn
+  performance_insights_enabled    = true
+  performance_insights_kms_key_id = var.kms_key_arn
 
   tags = { Name = "${var.name_prefix}-db" }
 }
