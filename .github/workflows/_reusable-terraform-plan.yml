@@ -99,6 +99,7 @@ jobs:
           set +e
           trivy config \
             --tf-vars environments/${{ env.ENVIRONMENT }}/terraform.tfvars \
+            --ignorefile "$GITHUB_WORKSPACE/.trivyignore.yaml" \
             --format table \
             --exit-code 1 \
             --output /tmp/trivy-output.txt \

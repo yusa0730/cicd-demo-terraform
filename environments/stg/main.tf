@@ -17,6 +17,7 @@ module "network" {
   availability_zones   = var.availability_zones
   public_subnet_cidrs  = var.public_subnet_cidrs
   private_subnet_cidrs = var.private_subnet_cidrs
+  kms_key_arn          = module.kms.key_arn
 }
 
 module "ecr" {
@@ -34,6 +35,7 @@ module "database" {
   private_subnet_ids = module.network.private_subnet_ids
   db_name            = var.db_name
   db_username        = var.db_username
+  kms_key_arn        = module.kms.key_arn
 }
 
 module "alb" {

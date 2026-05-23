@@ -6,6 +6,7 @@ resource "random_password" "db" {
 resource "aws_secretsmanager_secret" "database_url" {
   name                    = "${var.name_prefix}/database-url"
   recovery_window_in_days = 0
+  kms_key_id              = var.kms_key_arn
 }
 
 resource "aws_secretsmanager_secret_version" "database_url" {
@@ -49,6 +50,9 @@ resource "aws_db_instance" "this" {
   copy_tags_to_snapshot      = true
 
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
+
+  performance_insights_enabled          = true
+  performance_insights_kms_key_id       = var.kms_key_arn
 
   tags = { Name = "${var.name_prefix}-db" }
 }
