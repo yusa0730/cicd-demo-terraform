@@ -102,7 +102,7 @@ ECS SG   → RDS SG (5432/tcp inbound from ECS SG)
 
 ## データストア
 
-### RDS (PostgreSQL 16.3)
+### RDS (PostgreSQL 16)
 
 | 項目 | dev / stg | prod |
 |-----|----------|------|
@@ -146,19 +146,33 @@ GitHub Actions
     │
     │ (OIDC Token)
     ▼
-GitHub OIDC Provider (IAM)
+GitHub OIDC Provider (IAM)  ← bootstrap/<env> で環境ごとに作成
     │
     │ sts:AssumeRoleWithWebIdentity
-    ├─▶ Terraform Role     ← terraform plan / apply
-    └─▶ App Deploy Role    ← ECR push / ECS deploy
+    ├─▶ terraform-plan-role   ← terraform plan / destroy-plan
+    ├─▶ terraform-apply-role  ← terraform apply / destroy-apply
+    └─▶ app-deploy-role       ← ECR push / ECS deploy
 ```
 
-| ロール | 用途 | 信頼するブランチ |
-|------|------|--------------|
-| `{prefix}-terraform-role` | Terraform による インフラ管理 | `main` (PR) / `{env}` (apply) |
-| `{prefix}-app-deploy-role` | ECR push・ECS タスク更新 | `develop` / `{env}` |
+### IAM ロール一覧
 
-> GitHub OIDC Provider は `environments/dev` で作成し、`environments/stg` / `environments/prod` は data source で参照します。
+| ロール名 | 用途 | OIDC sub 条件 |
+|--------|------|--------------|
+| `{project}-{env}-terraform-plan-role` | plan / destroy-plan | `pull_request` または `ref:refs/heads/{branch}` |
+| `{project}-{env}-terraform-apply-role` | apply / destroy-apply | `environment:{env}` |
+| `{project}-{env}-app-deploy-role` | ECR push・ECS タスク更新 | `environment:{env}` |
+
+### bootstrap 設計
+
+OIDC Provider と IAM ロールは `bootstrap/<env>/` で管理します。環境ごとに独立した Terraform stack を持ち、それぞれ別の AWS アカウントに対して実行できます。
+
+| ディレクトリ | 対象アカウント | 管理リソース |
+|-----------|------------|------------|
+| `bootstrap/dev` | dev アカウント | OIDC Provider・IAM ロール 3 本 |
+| `bootstrap/stg` | stg アカウント | OIDC Provider・IAM ロール 3 本 |
+| `bootstrap/prod` | prod アカウント | OIDC Provider・IAM ロール 3 本 |
+
+S3 state バケット（`cicd-demo-terraform-{env}`）は bootstrap workflow の AWS CLI ステップで作成・設定します。Terraform では管理しません（循環依存を避けるため）。
 
 ## Terraform モジュール構成
 
