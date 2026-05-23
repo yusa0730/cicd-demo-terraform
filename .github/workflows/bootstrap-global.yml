@@ -1,24 +1,45 @@
-name: bootstrap-global
+name: bootstrap
 
-# One-time workflow to create OIDC Provider, IAM roles, and S3 state buckets.
-# Run this once before using any other workflow.
-# After completion: register the output ARNs in GitHub Secrets / Environments, then delete
-# AWS_BOOTSTRAP_ACCESS_KEY_ID / AWS_BOOTSTRAP_SECRET_ACCESS_KEY from Repository Secrets.
+# Per-account bootstrap: creates OIDC Provider, IAM roles, and S3 state bucket
+# in the target environment's AWS account.
+# Run once per environment (dev → stg → prod).
+#
+# Prerequisites:
+#   Create GitHub Environments bootstrap-dev / bootstrap-stg / bootstrap-prod,
+#   each with AWS_BOOTSTRAP_ACCESS_KEY_ID and AWS_BOOTSTRAP_SECRET_ACCESS_KEY
+#   for the respective AWS account's temporary IAM user.
+#
+# After each run:
+#   Register the output ARNs in GitHub Secrets / Environments, then delete
+#   the bootstrap IAM user and credentials.
 on:
   workflow_dispatch:
+    inputs:
+      target_environment:
+        description: "Target environment to bootstrap"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+        default: dev
 
 permissions:
   contents: read
 
 concurrency:
-  group: bootstrap-global
+  group: bootstrap-${{ inputs.target_environment }}
   cancel-in-progress: false
 
 jobs:
-  bootstrap-global:
+  bootstrap:
     runs-on: ubuntu-latest
+    # Each bootstrap-<env> GitHub Environment holds AWS credentials for that account.
+    environment: bootstrap-${{ inputs.target_environment }}
 
     env:
+      ENVIRONMENT: ${{ inputs.target_environment }}
       AWS_REGION: ap-northeast-1
 
     steps:
@@ -31,9 +52,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_BOOTSTRAP_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Ensure global state bucket
+      - name: Ensure state bucket for bootstrap backend
         run: |
-          BUCKET="cicd-demo-terraform-global"
+          BUCKET="cicd-demo-terraform-${ENVIRONMENT}"
 
           if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
             echo "$BUCKET already exists"
@@ -67,57 +88,45 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: bootstrap/global
+        working-directory: bootstrap/${{ env.ENVIRONMENT }}
         run: terraform init
 
       - name: Terraform Apply
-        working-directory: bootstrap/global
+        working-directory: bootstrap/${{ env.ENVIRONMENT }}
         run: terraform apply -auto-approve
 
       - name: Show next steps in Step Summary
-        working-directory: bootstrap/global
+        working-directory: bootstrap/${{ env.ENVIRONMENT }}
         run: |
-          PLAN_DEV=$(terraform output -json terraform_plan_role_arns  | jq -r '.dev')
-          PLAN_STG=$(terraform output -json terraform_plan_role_arns  | jq -r '.stg')
-          PLAN_PROD=$(terraform output -json terraform_plan_role_arns | jq -r '.prod')
-          APPLY_DEV=$(terraform output -json terraform_apply_role_arns  | jq -r '.dev')
-          APPLY_STG=$(terraform output -json terraform_apply_role_arns  | jq -r '.stg')
-          APPLY_PROD=$(terraform output -json terraform_apply_role_arns | jq -r '.prod')
-          DEPLOY_DEV=$(terraform output -json app_deploy_role_arns  | jq -r '.dev')
-          DEPLOY_STG=$(terraform output -json app_deploy_role_arns  | jq -r '.stg')
-          DEPLOY_PROD=$(terraform output -json app_deploy_role_arns | jq -r '.prod')
+          UPPER_ENV=$(echo "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')
+          PLAN_ARN=$(terraform output -raw terraform_plan_role_arn)
+          APPLY_ARN=$(terraform output -raw terraform_apply_role_arn)
+          DEPLOY_ARN=$(terraform output -raw app_deploy_role_arn)
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
-          ## Bootstrap Global 完了
+          ## Bootstrap 完了 — ${ENVIRONMENT}
 
           ### 1. terraform-repo Repository Secrets
 
           | Secret 名 | 値 |
           |-----------|---|
-          | \`AWS_TERRAFORM_PLAN_ROLE_ARN_DEV\`  | \`${PLAN_DEV}\`  |
-          | \`AWS_TERRAFORM_PLAN_ROLE_ARN_STG\`  | \`${PLAN_STG}\`  |
-          | \`AWS_TERRAFORM_PLAN_ROLE_ARN_PROD\` | \`${PLAN_PROD}\` |
+          | \`AWS_TERRAFORM_PLAN_ROLE_ARN_${UPPER_ENV}\` | \`${PLAN_ARN}\` |
 
-          ### 2. terraform-repo GitHub Environments
+          ### 2. terraform-repo GitHub Environment \`${ENVIRONMENT}\`
 
-          | Environment | Secret 名 | 値 |
-          |------------|-----------|---|
-          | \`dev\`  | \`AWS_TERRAFORM_ROLE_ARN\` | \`${APPLY_DEV}\`  |
-          | \`stg\`  | \`AWS_TERRAFORM_ROLE_ARN\` | \`${APPLY_STG}\`  |
-          | \`prod\` | \`AWS_TERRAFORM_ROLE_ARN\` | \`${APPLY_PROD}\` |
+          | Secret 名 | 値 |
+          |-----------|---|
+          | \`AWS_TERRAFORM_ROLE_ARN\` | \`${APPLY_ARN}\` |
 
-          ### 3. app-repo GitHub Environments
+          ### 3. app-repo GitHub Environment \`${ENVIRONMENT}\`
 
-          | Environment | Secret 名 | 値 |
-          |------------|-----------|---|
-          | \`dev\`  | \`AWS_DEPLOY_ROLE_ARN\` | \`${DEPLOY_DEV}\`  |
-          | \`stg\`  | \`AWS_DEPLOY_ROLE_ARN\` | \`${DEPLOY_STG}\`  |
-          | \`prod\` | \`AWS_DEPLOY_ROLE_ARN\` | \`${DEPLOY_PROD}\` |
+          | Secret 名 | 値 |
+          |-----------|---|
+          | \`AWS_DEPLOY_ROLE_ARN\` | \`${DEPLOY_ARN}\` |
 
           ### 4. 後片付け（登録完了後）
 
-          - Repository Secrets から \`AWS_BOOTSTRAP_ACCESS_KEY_ID\` を削除
-          - Repository Secrets から \`AWS_BOOTSTRAP_SECRET_ACCESS_KEY\` を削除
+          - GitHub Environment \`bootstrap-${ENVIRONMENT}\` から \`AWS_BOOTSTRAP_ACCESS_KEY_ID\` を削除
+          - GitHub Environment \`bootstrap-${ENVIRONMENT}\` から \`AWS_BOOTSTRAP_SECRET_ACCESS_KEY\` を削除
           - AWS Console の bootstrap 用 IAM User を削除
-          - \`bootstrap/global/imports.tf\` を削除してコミット
           EOF
