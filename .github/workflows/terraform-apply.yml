@@ -37,63 +37,18 @@ jobs:
               ;;
           esac
 
+  # dev / stg: plan + apply をリユーザブルワークフローで実行
   apply-non-prod:
     needs: resolve-environment
     if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment != 'prod'
-    runs-on: ubuntu-latest
+    uses: ./.github/workflows/_reusable-terraform-apply.yml
+    with:
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      working_directory: environments/${{ needs.resolve-environment.outputs.environment }}
+      checkout_ref: ${{ github.event.pull_request.base.ref }}
+    secrets: inherit
 
-    environment: ${{ needs.resolve-environment.outputs.environment }}
-
-    env:
-      ENVIRONMENT: ${{ needs.resolve-environment.outputs.environment }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.ref }}
-
-      - name: Configure AWS credentials OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.15.3"
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        working-directory: environments/${{ env.ENVIRONMENT }}
-        run: terraform init
-
-      - name: Terraform Plan
-        working-directory: environments/${{ env.ENVIRONMENT }}
-        run: terraform plan -no-color -out=tfplan
-
-      - name: Show plan in Step Summary
-        working-directory: environments/${{ env.ENVIRONMENT }}
-        run: |
-          echo "### Terraform Plan — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Terraform Apply
-        working-directory: environments/${{ env.ENVIRONMENT }}
-        run: terraform apply -auto-approve tfplan
-
-      - name: Show outputs
-        working-directory: environments/${{ env.ENVIRONMENT }}
-        run: |
-          echo "### Terraform Outputs — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"        >> "$GITHUB_STEP_SUMMARY"
-          printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)"  >> "$GITHUB_STEP_SUMMARY"
-          printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"          >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
+  # prod: plan → artifact 保存 → 承認ゲート → apply
   prod-plan:
     needs: resolve-environment
     if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'prod'
@@ -104,7 +59,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref }}
 
-      - name: Configure AWS credentials OIDC
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_PROD }}
@@ -116,6 +71,12 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
+      - name: Install conftest
+        run: |
+          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
+            | tar xz conftest
+          sudo mv conftest /usr/local/bin/conftest
+
       - name: Terraform Init
         working-directory: environments/prod
         run: terraform init
@@ -123,6 +84,12 @@ jobs:
       - name: Terraform Plan
         working-directory: environments/prod
         run: terraform plan -no-color -out=tfplan
+
+      - name: Run conftest security checks
+        working-directory: environments/prod
+        run: |
+          terraform show -json tfplan > tfplan.json
+          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
 
       - name: Show plan in Step Summary
         working-directory: environments/prod
@@ -154,7 +121,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref }}
 
-      - name: Configure AWS credentials OIDC
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
@@ -189,7 +156,7 @@ jobs:
         run: |
           echo "### Terraform Outputs — prod" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"        >> "$GITHUB_STEP_SUMMARY"
-          printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)"  >> "$GITHUB_STEP_SUMMARY"
-          printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"          >> "$GITHUB_STEP_SUMMARY"
+          printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"       >> "$GITHUB_STEP_SUMMARY"
+          printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)" >> "$GITHUB_STEP_SUMMARY"
+          printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"         >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

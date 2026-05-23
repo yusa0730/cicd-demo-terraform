@@ -1,0 +1,160 @@
+name: _reusable-terraform-plan
+
+# PR plan 用リユーザブルワークフロー
+# - tfsec:    Terraform コードの静的解析（セキュリティ設定ミスを検出）
+# - checkov:  Terraform コードの静的解析（CIS ベンチマーク等のポリシーチェック）
+# - tfcmt:    plan 結果を PR コメントに通知（削除があれば警告ラベル付き）
+# - conftest: plan JSON に対して OPA ポリシーを適用（local-exec 等を禁止）
+#
+# tfsec / checkov は continue-on-error: true のため結果を確認できるが build は止めない。
+# 本番環境では false に変更してセキュリティゲートとして機能させること。
+#
+# pull_request_target は使用しない（fork PR からの secret 漏洩を防ぐため）。
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev / stg / prod)"
+        type: string
+        required: true
+      working_directory:
+        description: "Terraform working directory (e.g. environments/dev)"
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select IAM role
+        id: role
+        run: |
+          case "$ENVIRONMENT" in
+            dev)  echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_DEV }}"  >> "$GITHUB_OUTPUT" ;;
+            stg)  echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_STG }}"  >> "$GITHUB_OUTPUT" ;;
+            prod) echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_PROD }}" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "Unsupported environment: $ENVIRONMENT"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.arn }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.3"
+          terraform_wrapper: false
+
+      - name: Install tools (tfsec / checkov / tfcmt / conftest)
+        run: |
+          # tfsec
+          curl -sL https://github.com/aquasecurity/tfsec/releases/download/v1.28.11/tfsec-linux-amd64 \
+            -o /tmp/tfsec && chmod +x /tmp/tfsec && sudo mv /tmp/tfsec /usr/local/bin/tfsec
+
+          # checkov
+          pip install --quiet checkov
+
+          # tfcmt
+          curl -sL https://github.com/suzuki-shunsuke/tfcmt/releases/download/v4.14.0/tfcmt_linux_amd64.tar.gz \
+            | tar xz tfcmt && sudo mv tfcmt /usr/local/bin/tfcmt
+
+          # conftest
+          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
+            | tar xz conftest && sudo mv conftest /usr/local/bin/conftest
+
+      # --- 静的解析（terraform init 不要）---
+
+      - name: Run tfsec
+        id: tfsec
+        working-directory: ${{ inputs.working_directory }}
+        continue-on-error: true
+        run: |
+          tfsec . --no-colour 2>&1 | tee /tmp/tfsec-output.txt
+
+      - name: Show tfsec results in Step Summary
+        if: always()
+        run: |
+          if [ "${{ steps.tfsec.outcome }}" = "success" ]; then
+            echo "### tfsec — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### tfsec — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/tfsec-output.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Run checkov
+        id: checkov
+        working-directory: ${{ inputs.working_directory }}
+        continue-on-error: true
+        run: |
+          checkov -d . --quiet --framework terraform 2>&1 | tee /tmp/checkov-output.txt
+
+      - name: Show checkov results in Step Summary
+        if: always()
+        run: |
+          if [ "${{ steps.checkov.outcome }}" = "success" ]; then
+            echo "### checkov — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### checkov — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # --- plan ---
+
+      - name: Terraform Init
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: tfcmt --var "env:$ENVIRONMENT" plan -- terraform plan -no-color -out=tfplan
+        continue-on-error: true
+
+      - name: Run conftest security checks
+        if: steps.plan.outcome == 'success'
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          terraform show -json tfplan > tfplan.json
+          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
+
+      - name: Show plan in Step Summary
+        if: steps.plan.outcome == 'success'
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          echo "### Terraform Plan — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1

@@ -1,0 +1,80 @@
+name: _reusable-terraform-apply
+
+# 非 prod 環境の apply 用リユーザブルワークフロー
+# apply workflow 内で plan を作成し、直後に apply する
+# prod は terraform-apply.yml 内にインライン実装（artifact + 承認ゲートのため）
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev / stg)"
+        type: string
+        required: true
+      working_directory:
+        description: "Terraform working directory (e.g. environments/dev)"
+        type: string
+        required: true
+      checkout_ref:
+        description: "Git ref to checkout (PR base branch)"
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    # AWS_TERRAFORM_ROLE_ARN は Environment Secret として各環境に設定
+    environment: ${{ inputs.environment }}
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout_ref }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.3"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Show plan in Step Summary
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          echo "### Terraform Plan — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform Apply
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show outputs
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          echo "### Terraform Outputs — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"       >> "$GITHUB_STEP_SUMMARY"
+          printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)" >> "$GITHUB_STEP_SUMMARY"
+          printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"         >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

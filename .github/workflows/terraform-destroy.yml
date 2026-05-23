@@ -13,7 +13,7 @@ on:
           - prod
         default: dev
       confirm:
-        description: "Type destroy to confirm"
+        description: "dev/stg: type 'destroy' / prod: type 'destroy-prod'"
         required: true
         type: string
 
@@ -37,8 +37,14 @@ jobs:
           ENVIRONMENT="${{ github.event.inputs.target_environment }}"
           CONFIRM="${{ github.event.inputs.confirm }}"
 
-          if [ "$CONFIRM" != "destroy" ]; then
-            echo "You must type 'destroy' to continue."
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            EXPECTED="destroy-prod"
+          else
+            EXPECTED="destroy"
+          fi
+
+          if [ "$CONFIRM" != "$EXPECTED" ]; then
+            echo "確認文字列が正しくありません。'$EXPECTED' と入力してください（入力値: '$CONFIRM'）"
             exit 1
           fi
 
@@ -69,10 +75,6 @@ jobs:
             dev)  echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_DEV }}"  >> "$GITHUB_OUTPUT" ;;
             stg)  echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_STG }}"  >> "$GITHUB_OUTPUT" ;;
             prod) echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_PROD }}" >> "$GITHUB_OUTPUT" ;;
-            *)
-              echo "Unsupported environment: $ENVIRONMENT"
-              exit 1
-              ;;
           esac
 
       - name: Configure AWS credentials for destroy plan
@@ -95,10 +97,21 @@ jobs:
         working-directory: environments/${{ env.ENVIRONMENT }}
         run: terraform plan -destroy -no-color -out=tfplan
 
-      - name: Show destroy plan in Step Summary
+      - name: Summarize deletion count
         working-directory: environments/${{ env.ENVIRONMENT }}
         run: |
+          DELETE_COUNT=$(terraform show -json tfplan \
+            | jq '[.resource_changes[] | select(.change.actions[] | contains("delete"))] | length')
           echo "### Terraform Destroy Plan — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> [!CAUTION]" >> "$GITHUB_STEP_SUMMARY"
+            echo "> **本番環境のリソースを削除します。承認前に内容を必ず確認してください。**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 削除されるリソース数 | $DELETE_COUNT |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -117,8 +130,8 @@ jobs:
       - destroy-plan
     runs-on: ubuntu-latest
 
-    # Required reviewers should be configured on each GitHub Environment.
-    # For practice, you can set required reviewers on dev as well.
+    # Required reviewers を各 GitHub Environment に設定しておくこと
+    # （destroy-plan の内容を確認してから承認できる）
     environment: ${{ needs.validate-input.outputs.environment }}
 
     env:

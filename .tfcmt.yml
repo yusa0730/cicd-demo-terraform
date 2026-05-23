@@ -1,0 +1,29 @@
+ci: github-actions
+notifier:
+  github:
+    token: $GITHUB_TOKEN
+terraform:
+  plan:
+    template: |
+      ## Terraform Plan — `{{ .Vars.env }}`
+      {{- if .HasDestroy }}
+
+      > [!WARNING]
+      > このplanにはリソースの削除が含まれます。内容を十分に確認してください。
+      {{- end }}
+
+      {{ .Result }}
+
+      <details><summary>詳細を展開</summary>
+
+      ```
+      {{ .Body }}
+      ```
+
+      </details>
+    when_add_or_change:
+      label:
+        - "terraform:changed"
+    when_destroy:
+      label:
+        - "terraform:destroy"

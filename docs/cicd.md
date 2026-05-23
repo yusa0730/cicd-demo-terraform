@@ -2,12 +2,59 @@
 
 ## Workflows 一覧
 
+### terraform-repo（このリポジトリ）
+
 | ファイル | トリガー | 内容 |
 |---------|---------|------|
-| `bootstrap.yml` | 手動（`workflow_dispatch`） | 選択した環境の S3 バケット作成・GitHub OIDC Provider 作成・IAM Role 作成。初回のみ実行 |
-| `terraform-plan.yml` | PR（develop / stg / prod 向け） | fmt チェック・plan を実行し結果を PR コメントに投稿 |
+| `terraform-plan.yml` | PR（develop / stg / prod 向け） | fmt チェック・plan を実行。tfcmt で PR コメント通知（削除があれば警告ラベル付き）、conftest でセキュリティポリシーチェック |
 | `terraform-apply.yml` | PR マージ（develop / stg / prod） | マージされた PR をトリガーに apply を実行。prod のみ plan 確認後に承認ゲートを挟む |
-| `terraform-destroy.yml` | 手動（`workflow_dispatch`） | 選択した環境のリソースを destroy。`destroy` と入力して確認後に実行 |
+| `terraform-destroy.yml` | 手動（`workflow_dispatch`） | 選択した環境のリソースを destroy。dev/stg: `destroy`、prod: `destroy-prod` と入力して確認後に実行 |
+| `_reusable-terraform-plan.yml` | `workflow_call` | PR plan の共通実装（terraform-plan.yml から呼び出し） |
+| `_reusable-terraform-apply.yml` | `workflow_call` | dev/stg apply の共通実装（terraform-apply.yml から呼び出し） |
+
+### terraform-bootstrap（別リポジトリ）
+
+| ファイル | トリガー | 内容 |
+|---------|---------|------|
+| `bootstrap.yml` | 手動（`workflow_dispatch`） | S3 バケット作成・GitHub OIDC Provider 作成・IAM Role 作成。初回および IAM 変更時に実行 |
+| `bootstrap-fmt.yml` | PR（main 向け） | terraform fmt チェック |
+
+### terraform-accounts（別リポジトリ）
+
+| ファイル | トリガー | 内容 |
+|---------|---------|------|
+| `baseline-plan.yml` | PR（develop / stg / prod 向け） | fmt チェック・plan を実行。tfcmt で PR コメント通知 |
+| `baseline-apply.yml` | PR マージ（develop / stg / prod） | アカウントセキュリティベースラインを適用。prod は承認ゲートあり |
+| `_reusable-baseline-plan.yml` | `workflow_call` | baseline plan の共通実装 |
+| `_reusable-baseline-apply.yml` | `workflow_call` | baseline apply の共通実装 |
+
+## Terraform CI セキュリティ制御
+
+### tfcmt による plan 通知
+
+[tfcmt](https://github.com/suzuki-shunsuke/tfcmt) を使用して plan 結果を PR にコメントします。
+
+- リソースの削除が含まれる場合は `terraform:destroy` ラベルと WARNING コメントを付与
+- 変更がある場合は `terraform:changed` ラベルを付与
+
+設定ファイル: `.tfcmt.yml`
+
+### conftest による静的チェック
+
+[conftest](https://github.com/open-policy-agent/conftest) + OPA (Open Policy Agent) で Terraform plan JSON を検査します。
+
+- `local-exec` provisioner の使用を禁止
+- `remote-exec` provisioner の使用を禁止
+
+ポリシーファイル: `policy/terraform.rego`
+
+terraform-plan.yml（PR plan）と terraform-apply.yml（prod-plan）の両方で実行します。
+
+### secret exfiltration 対策
+
+- `pull_request_target` は使用しない（fork PR からの secret 漏洩を防ぐため）
+- plan role / apply role を分離し、apply 権限は Environment approval 後のみ使用
+- Secrets Manager の値を terraform output に出力しない
 
 ---
 
@@ -36,11 +83,14 @@ PR コメントに plan 結果を投稿（upsert）
 ```
 PR マージ（develop / stg ブランチへ）
   ↓
+plan（terraform plan -out=tfplan）
+  ↓
 apply（terraform apply tfplan）
 ```
 
 - `pull_request: types: [closed]` + `merged == true` でトリガーします
-- plan 済みの tfplan を apply するため、apply 時に追加変更が入りません
+- apply workflow 内で tfplan を新規作成し、直後に apply します
+- PR 時の `terraform-plan.yml` で作成した tfplan を再利用しているわけではありません
 
 ### prod
 
@@ -65,7 +115,7 @@ prod-apply（terraform apply）
 | 入力項目 | 説明 |
 |---------|------|
 | `target_environment` | 削除対象の環境（dev / stg / prod） |
-| `confirm` | `destroy` と入力して実行を確定する |
+| `confirm` | dev/stg は `destroy`、prod は `destroy-prod` と入力して実行を確定する |
 
 ### 実行フロー
 
@@ -103,9 +153,9 @@ destroy-apply（保存済み destroy plan を apply）
 | `stg` | `AWS_TERRAFORM_ROLE_ARN` | stg の apply / destroy-apply 用 IAM Role ARN |
 | `prod` | `AWS_TERRAFORM_ROLE_ARN` | prod の apply / destroy-apply 用 IAM Role ARN |
 
-### terraform-repo の bootstrap Environments（初回のみ）
+### terraform-bootstrap の GitHub Environments（初回のみ）
 
-bootstrap 実行時のみ使用します。bootstrap 完了後は削除します。
+bootstrap 実行時のみ使用します。apply 完了後は削除します。
 
 | Environment 名 | Secret 名 | 用途 |
 |--------------|-----------|------|

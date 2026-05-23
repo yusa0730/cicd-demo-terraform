@@ -2,48 +2,66 @@
 
 ECS on Fargate + RDS + ALB 構成を Terraform で管理する CI/CD デモリポジトリです。
 
+## リポジトリ構成
+
+| リポジトリ | 責務 |
+|-----------|------|
+| `terraform-bootstrap` | OIDC Provider・IAM ロール（CI/CD 認証基盤） |
+| `terraform-accounts` | GuardDuty・CloudTrail・Config 等のアカウントセキュリティ基盤 |
+| `terraform-repo`（このリポジトリ） | VPC・ECS・RDS・ALB・ECR 等のアプリ実行基盤 |
+| `app-repo` | アプリケーションコード・ECS デプロイ |
+
+### environments/\<env\> の責務
+
+実際のアプリケーション実行基盤を管理します。
+
+- VPC / ALB / ECS / RDS / ECR
+- SSM Parameter Store
+- Secrets Manager
+
+GitHub Actions → AWS 認証に使う IAM ロールと OIDC Provider は `terraform-bootstrap` で管理します。
+`terraform-destroy` で `environments/<env>` を削除しても、IAM ロールや OIDC Provider は削除されません。
+
+---
+
 ## はじめに
 
 このリポジトリを初めて使うときは、以下の手順で環境を構築してください。
 
----
-
-### Step 1: AWS に bootstrap 用 IAM ユーザーを作成する
-
-GitHub Actions が初回のみ AWS を操作するために、一時的な IAM ユーザーを作成します。
-
-1. AWS Console → `IAM → Users → Create user`
-   - ユーザー名: `github-bootstrap`（任意）
-   - 権限: `AdministratorAccess`
-2. アクセスキーを発行して `Access key ID` と `Secret access key` を控える
-
-> bootstrap 完了後にこのユーザーは削除します。
+> **前提条件**: `terraform-bootstrap` の bootstrap が完了していること。
+> bootstrap 手順は [terraform-bootstrap の README](../terraform-bootstrap/README.md) を参照してください。
 
 ---
 
-### Step 2: GitHub に Bootstrap Environment を作成する
+### Step 1: GitHub に Secrets / Environments を登録する
 
-bootstrap 用の認証情報を、GitHub の Environment に登録します。
-Repository Secrets ではなく **Environment Secrets** を使う理由は、環境ごとに別の AWS アカウントの認証情報を分けて管理するためです。
+`terraform-bootstrap` の apply 完了後、Step Summary に表示された ARN を以下に登録します。
 
-`Settings → Environments → New environment` で以下の 3 つを作成します。
+#### terraform-repo の Repository Secrets
 
-| Environment 名 | 対象 AWS アカウント |
-|---------------|-----------------|
-| `bootstrap-dev` | dev 用 AWS アカウント |
-| `bootstrap-stg` | stg 用 AWS アカウント |
-| `bootstrap-prod` | prod 用 AWS アカウント |
-
-各 Environment に以下の Secret を登録します。
+`Settings → Secrets and variables → Actions → Repository secrets`
 
 | Secret 名 | 値 |
 |-----------|---|
-| `AWS_BOOTSTRAP_ACCESS_KEY_ID` | Step 1 の Access key ID |
-| `AWS_BOOTSTRAP_SECRET_ACCESS_KEY` | Step 1 の Secret access key |
+| `AWS_TERRAFORM_PLAN_ROLE_ARN_DEV` | bootstrap Step Summary の `terraform_plan_role_arn`（dev） |
+| `AWS_TERRAFORM_PLAN_ROLE_ARN_STG` | bootstrap Step Summary の `terraform_plan_role_arn`（stg） |
+| `AWS_TERRAFORM_PLAN_ROLE_ARN_PROD` | bootstrap Step Summary の `terraform_plan_role_arn`（prod） |
+
+#### terraform-repo の GitHub Environments
+
+`Settings → Environments` で `dev` / `stg` / `prod` を作成します。
+
+| Environment | Secret 名 | 値 |
+|------------|-----------|---|
+| `dev` | `AWS_TERRAFORM_ROLE_ARN` | bootstrap Step Summary の `terraform_apply_role_arn`（dev） |
+| `stg` | `AWS_TERRAFORM_ROLE_ARN` | bootstrap Step Summary の `terraform_apply_role_arn`（stg） |
+| `prod` | `AWS_TERRAFORM_ROLE_ARN` | bootstrap Step Summary の `terraform_apply_role_arn`（prod） |
+
+`prod` Environment には Required reviewers を設定します。
 
 ---
 
-### Step 3: コードを develop ブランチに push する
+### Step 2: コードを develop ブランチに push する
 
 ```bash
 git checkout -b develop
@@ -54,65 +72,27 @@ git push -u origin develop
 
 > GitHub リポジトリの default branch を `develop` に設定してください。
 > `Settings → Branches → Default branch`
-> （`workflow_dispatch` は default branch のワークフローしか実行できないためです）
 
 ---
 
-### Step 4: bootstrap を実行する（dev から順番に）
+### Step 3: CODEOWNERS を設定する
 
-`Actions → bootstrap → Run workflow` を開き、`target_environment = dev` を選択して実行します。
+`.github/CODEOWNERS` の `@your-org/infra-approvers` を実際の Team 名に変更します。
 
-bootstrap が行うこと：
-- S3 state バケット（`cicd-demo-terraform-dev`）を AWS CLI で作成
-- GitHub OIDC Provider を AWS IAM に作成
-- Terraform plan 用・apply 用・app deploy 用の IAM Role を作成
+```
+/environments/      @your-org/infra-approvers
+/modules/           @your-org/infra-approvers
+/.github/workflows/ @your-org/infra-approvers
+/.github/CODEOWNERS @your-org/infra-approvers
+```
 
-> **dev を必ず最初に実行してください。**
-> stg / prod は後から同じ手順で実行します（`target_environment = stg` / `prod`）。
-
----
-
-### Step 5: Step Summary の ARN を GitHub に登録する
-
-bootstrap 完了後、Step Summary に 3 つの Role ARN が表示されます。
-以下の場所に登録してください。
-
-#### terraform-repo の Repository Secrets
-
-`Settings → Secrets and variables → Actions → Repository secrets`
-
-| Secret 名 | 値 |
-|-----------|---|
-| `AWS_TERRAFORM_PLAN_ROLE_ARN_DEV` | Step Summary の `terraform_plan_role_arn` |
-
-#### terraform-repo の GitHub Environment `dev`
-
-`Settings → Environments → dev`
-
-| Secret 名 | 値 |
-|-----------|---|
-| `AWS_TERRAFORM_ROLE_ARN` | Step Summary の `terraform_apply_role_arn` |
-
-#### app-repo の GitHub Environment `dev`
-
-| Secret 名 | 値 |
-|-----------|---|
-| `AWS_DEPLOY_ROLE_ARN` | Step Summary の `app_deploy_role_arn` |
+> Team を CODEOWNERS に指定するには以下が必要です：
+> - Team がこの repository に **write 権限**を持っている
+> - Team visibility が **visible** である
 
 ---
 
-### Step 6: bootstrap 用の認証情報を削除する
-
-GitHub の `bootstrap-dev` Environment から以下を削除します。
-
-- `AWS_BOOTSTRAP_ACCESS_KEY_ID`
-- `AWS_BOOTSTRAP_SECRET_ACCESS_KEY`
-
-AWS Console で `github-bootstrap` IAM ユーザーを削除します。
-
----
-
-### Step 7: Branch Protection Rules を設定する
+### Step 4: Branch Protection Rules を設定する
 
 `Settings → Branches → Add branch ruleset` で `develop` / `stg` / `prod` それぞれに設定します。
 
@@ -124,35 +104,35 @@ AWS Console で `github-bootstrap` IAM ユーザーを削除します。
 | Require status checks to pass before merging | ✅ |
 | Required status checks | `terraform-plan / fmt`、`terraform-plan / plan` |
 
-`prod` Environment には Required reviewers も設定します（apply 前に承認が必要なため）。
-
 ---
 
-### Step 8: stg / prod の bootstrap も実行する
-
-Step 4〜6 を `target_environment = stg`、`target_environment = prod` で繰り返します。
-
----
-
-### Step 9: 動作確認
+### Step 5: 動作確認
 
 ```
 1. feature ブランチを作成して develop へ PR を出す
    → terraform-plan が自動実行される
-   → PR コメントに plan の結果が表示される
+   → PR コメントに plan 結果が tfcmt 形式で表示される
+     （削除がある場合は WARNING ラベルと警告コメントが付く）
+   → conftest でセキュリティポリシーチェックが実行される
 
-2. PR を approve して develop へ merge する
+2. CODEOWNERS (infra-approvers) が approve → develop へ merge する
    → terraform-apply が自動実行される
+   → apply workflow 内で terraform plan -out=tfplan を作成し、
+     直後に terraform apply tfplan を実行する
    → dev 環境に apply される
 
 3. develop → stg へ PR を出して merge する
    → stg 環境に apply される
 
 4. stg → prod へ PR を出して merge する
-   → prod-plan が自動実行される（Step Summary に plan 全文が表示される）
+   → prod-plan が自動実行される（conftest チェック + Step Summary に plan 全文）
    → 承認者が内容を確認して「Approve and deploy」をクリックする
+   → prod-apply で保存済み tfplan を apply する
    → prod 環境に apply される
 ```
+
+> `terraform-apply.yml` での tfplan は apply workflow 内で新規に作成します。
+> PR 時の `terraform-plan.yml` で作成した tfplan を再利用しているわけではありません。
 
 ---
 

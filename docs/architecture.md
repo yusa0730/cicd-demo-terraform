@@ -146,7 +146,7 @@ GitHub Actions
     │
     │ (OIDC Token)
     ▼
-GitHub OIDC Provider (IAM)  ← bootstrap/<env> で環境ごとに作成
+GitHub OIDC Provider (IAM)  ← terraform-bootstrap で環境ごとに作成
     │
     │ sts:AssumeRoleWithWebIdentity
     ├─▶ terraform-plan-role   ← terraform plan / destroy-plan
@@ -164,13 +164,16 @@ GitHub OIDC Provider (IAM)  ← bootstrap/<env> で環境ごとに作成
 
 ### bootstrap 設計
 
-OIDC Provider と IAM ロールは `bootstrap/<env>/` で管理します。環境ごとに独立した Terraform stack を持ち、それぞれ別の AWS アカウントに対して実行できます。
+OIDC Provider と IAM ロールは `terraform-bootstrap` リポジトリで管理します。
+このリポジトリから分離することで、terraform-repo の CI/CD が自身の IAM ロールを変更できないよう権限境界を確保しています。
+
+環境ごとに独立した Terraform stack を持ち、それぞれ別の AWS アカウントに対して実行できます。
 
 | ディレクトリ | 対象アカウント | 管理リソース |
 |-----------|------------|------------|
-| `bootstrap/dev` | dev アカウント | OIDC Provider・IAM ロール 3 本 |
-| `bootstrap/stg` | stg アカウント | OIDC Provider・IAM ロール 3 本 |
-| `bootstrap/prod` | prod アカウント | OIDC Provider・IAM ロール 3 本 |
+| `terraform-bootstrap/environments/dev` | dev アカウント | OIDC Provider・IAM ロール 5 本 |
+| `terraform-bootstrap/environments/stg` | stg アカウント | OIDC Provider・IAM ロール 5 本 |
+| `terraform-bootstrap/environments/prod` | prod アカウント | OIDC Provider・IAM ロール 5 本 |
 
 S3 state バケット（`cicd-demo-terraform-{env}`）は bootstrap workflow の AWS CLI ステップで作成・設定します。Terraform では管理しません（循環依存を避けるため）。
 
@@ -187,6 +190,20 @@ modules/
 
 各環境 (`environments/dev`, `stg`, `prod`) はこれらのモジュールを組み合わせて構成します。
 ECS SG → RDS SG の ingress rule のみ、循環依存を避けるために環境ルートで定義します。
+
+## アカウントセキュリティベースライン
+
+アカウント共通のセキュリティ設定は `terraform-accounts` リポジトリで管理します。
+`terraform-bootstrap` 完了後、`environments/<env>` の apply 前に実行することを推奨します。
+
+| リソース | dev/stg | prod | 内容 |
+|---------|---------|------|------|
+| IAM Password Policy | 有効 | 有効 | 最小パスワード長 16 文字・複雑性要件・90 日有効期限 |
+| GuardDuty | 有効 | 有効 | 脅威検出。S3 ログ解析を有効化 |
+| CloudTrail | 有効 | 有効 | 全リージョン対応のマルチリージョントレイル（S3 にログ保存） |
+| AWS Config | 有効 | 有効 | 全リソースの設定変更を記録（S3 に配信） |
+| Security Hub | 無効 | 有効 | セキュリティ検出結果の集約（課金に注意） |
+| Budget | 無効 | 有効 | 月次コストが上限の 80% / 100% を超えるとメール通知 |
 
 ## 環境別スペック
 
