@@ -16,6 +16,7 @@ terraform:
 
       {{ .Result }}
 
+      {{- if .Body }}
       <details><summary>詳細を展開</summary>
 
       ```
@@ -23,6 +24,9 @@ terraform:
       ```
 
       </details>
+      {{- end }}
+
+      [詳細は Actions の Step Summary を参照]({{ .Link }})
 
     when_add_or_update_only:
       label: "terraform:changed"
