@@ -83,7 +83,7 @@ jobs:
 
       - name: Run trivy
         id: trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         continue-on-error: true
         with:
           scan-type: config
@@ -101,7 +101,11 @@ jobs:
           else
             echo "### trivy — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY"
+            if [ -f /tmp/trivy-output.txt ]; then
+              cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "trivy did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
