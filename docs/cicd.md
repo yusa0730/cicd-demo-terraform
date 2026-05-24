@@ -7,10 +7,11 @@
 | ファイル | トリガー | 内容 |
 |---------|---------|------|
 | `terraform-plan.yml` | PR（develop / stg / prod 向け） | fmt チェック・plan を実行。tfcmt で PR コメント通知（削除があれば警告ラベル付き）、conftest でセキュリティポリシーチェック |
-| `terraform-apply.yml` | PR マージ（develop / stg / prod） | マージされた PR をトリガーに apply を実行。prod のみ plan 確認後に承認ゲートを挟む |
+| `terraform-apply.yml` | PR マージ（develop / stg / prod） | マージされた PR をトリガーに apply を実行。dev / prod は plan 確認後に承認ゲートを挟む |
 | `terraform-destroy.yml` | 手動（`workflow_dispatch`） | 選択した環境のリソースを destroy。dev/stg: `destroy`、prod: `destroy-prod` と入力して確認後に実行 |
+| `slack-test.yml` | 手動（`workflow_dispatch`） | Slack 通知の疎通確認用テスト workflow |
 | `_reusable-terraform-plan.yml` | `workflow_call` | PR plan の共通実装（terraform-plan.yml から呼び出し） |
-| `_reusable-terraform-apply.yml` | `workflow_call` | dev/stg apply の共通実装（terraform-apply.yml から呼び出し） |
+| `_reusable-terraform-apply.yml` | `workflow_call` | stg apply の共通実装（terraform-apply.yml から呼び出し） |
 
 ### terraform-bootstrap（別リポジトリ）
 
@@ -234,3 +235,109 @@ bootstrap 実行時のみ使用します。apply 完了後は削除します。
 | 名前 | デフォルト値 | 用途 |
 |-----|------------|-----|
 | `AWS_REGION` | `ap-northeast-1` | AWS リージョン |
+
+---
+
+## Slack 通知
+
+### 概要
+
+[slackapi/slack-github-action](https://github.com/slackapi/slack-github-action) v3 の `chat.postMessage` を使い、Terraform CI/CD の重要イベントを Slack へ通知します。通知先は 1 チャンネルに集約し、メッセージ内の種別・環境・結果で識別します。
+
+### 通知先・Secrets
+
+| Secret 名 | 用途 | 設定場所 |
+|---|---|---|
+| `SLACK_BOT_TOKEN` | Slack Bot Token（`xoxb-...`） | Repository Secrets |
+| `SLACK_CHANNEL_ID_TERRAFORM` | 通知先チャンネル ID | Repository Secrets |
+
+通知先チャンネル: `#all-terraform-notification-test`
+
+> チャンネル ID は Slack のチャンネル詳細画面の下部に表示される `C` で始まる文字列です（チャンネル名 `#...` ではありません）。
+
+> Slack Bot は通知先チャンネルに参加している必要があります（`/invite @ボット名`）。
+
+### 通知一覧
+
+| 種別 | アイコン | トリガー | 実装箇所 |
+|---|---|---|---|
+| apply 成功 | ✅ | dev-apply / stg apply / prod-apply 完了 | `terraform-apply.yml`、`_reusable-terraform-apply.yml` |
+| apply 失敗 | ❌ | dev-apply / stg apply / prod-apply 失敗 | 同上（`if: always()` で必ず送信） |
+| plan 失敗 | ❌ | PR の terraform-plan が失敗 | `terraform-plan.yml`（`notify-plan-failure` job） |
+| destructive changes | ⚠️ | plan に delete / replace が含まれる | `terraform-apply.yml` dev-plan / prod-plan、`_reusable-terraform-apply.yml` |
+| destroy 成功/失敗 | 🚨 | terraform-destroy 完了 | `terraform-destroy.yml` destroy-apply |
+
+### 通知メッセージの内容
+
+各通知には以下の情報を含みます。
+
+| フィールド | 内容 |
+|---|---|
+| 種別・結果 | アイコン + タイトル（例: ✅ *Terraform apply success*） |
+| Environment | `dev` / `stg` / `prod` |
+| Repository | リポジトリ名 |
+| Branch / PR | ブランチ名またはPRリンク |
+| Actor | 実行者の GitHub ユーザー名 |
+| Run | GitHub Actions の実行ログへのリンク |
+
+destructive changes 通知には delete / replace のリソース数も含みます。
+
+### 実装上のポイント
+
+**`if: always()` で失敗時も通知する**
+
+apply / destroy の通知ステップは `if: always()` を設定しています。前段の terraform apply が失敗しても通知ステップが必ず実行されるため、失敗を見逃しません。
+
+```yaml
+- name: Notify Slack apply result
+  if: always()
+  continue-on-error: true
+```
+
+**`continue-on-error: true` で通知失敗を無害化する**
+
+Slack API の一時的な障害や Secret の未設定が原因で通知ステップが失敗しても、workflow 全体への影響を防ぎます。terraform apply 自体の成否に通知が影響しません。
+
+**`unfurl_links: false` でリンクカード展開を抑制する**
+
+GitHub Actions の URL を貼るとリンクカードが展開されて通知が大きくなるため、全通知に `unfurl_links: false` / `unfurl_media: false` を設定しています。
+
+**destructive changes の検知ロジック**
+
+`terraform show -json tfplan` で出力した plan JSON を `jq` でパースし、delete / replace アクションのリソース数をカウントします。
+
+```bash
+DELETE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete"])] | length' tfplan.json)
+REPLACE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' tfplan.json)
+```
+
+1件以上あれば `has_destructive_changes=true` を出力し、後続の通知ステップが起動します。
+
+### Slack App のセットアップ手順
+
+1. [api.slack.com/apps](https://api.slack.com/apps) でアプリを作成
+2. **OAuth & Permissions** → **Bot Token Scopes** に `chat:write` を追加
+3. **Install to Workspace** でインストール → **Bot User OAuth Token**（`xoxb-...`）をコピー
+4. 通知先チャンネルで `/invite @ボット名` を実行
+5. GitHub Repository Secrets に以下を登録
+
+```
+SLACK_BOT_TOKEN        = xoxb-...
+SLACK_CHANNEL_ID_TERRAFORM = C0XXXXXXXXX
+```
+
+### 疎通確認
+
+`slack-test.yml` workflow を使って、本番 workflow に組み込む前に Slack への接続を確認できます。
+
+```
+GitHub → Actions → slack-test → Run workflow
+```
+
+成功すると以下のようなメッセージが通知先チャンネルに届きます。
+
+```
+✅ Slack通知テスト成功
+Repository: <リポジトリ名>
+Run: GitHub Actions
+```
