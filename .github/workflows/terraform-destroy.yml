@@ -169,3 +169,26 @@ jobs:
       - name: Terraform Apply Destroy Plan
         working-directory: environments/${{ env.ENVIRONMENT }}
         run: terraform apply -auto-approve tfplan
+
+      - name: Notify Slack destroy result
+        if: always()
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v3.0.3
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
+            text: "Terraform destroy ${{ job.status }} - ${{ env.ENVIRONMENT }}"
+            unfurl_links: false
+            unfurl_media: false
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: |
+                    :rotating_light: *Terraform destroy ${{ job.status }}*
+                    *Environment:* `${{ env.ENVIRONMENT }}`
+                    *Repository:* `${{ github.repository }}`
+                    *Actor:* `${{ github.actor }}`
+                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
