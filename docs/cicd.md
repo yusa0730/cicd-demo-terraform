@@ -80,31 +80,41 @@ PR コメントに plan 結果を投稿（upsert）
 
 ## terraform-apply の動作
 
-### dev / stg
+### dev / prod（同じフロー）
 
 ```
-PR マージ（develop / stg ブランチへ）
+PR マージ（develop / prod ブランチへ）
+  ↓
+dev-plan / prod-plan
+  └─ conftest セキュリティチェック
+  └─ plan 結果を Step Summary に表示
+  └─ tfplan を artifact として保存
+  ↓
+[GitHub Environment の Required reviewers が内容を確認して承認]
+  ↓
+dev-apply / prod-apply（保存済み tfplan を apply）
+```
+
+- `pull_request: types: [closed]` + `merged == true` でトリガーします
+- plan と apply は別 job として実行されます
+- plan は plan 専用 IAM Role（`AWS_TERRAFORM_PLAN_ROLE_ARN_*`）で実行します
+- apply は Environment Secret の apply 専用 IAM Role（`AWS_TERRAFORM_ROLE_ARN`）で実行します
+- 承認者は Step Summary の plan 内容を確認してから承認できます
+- 承認された apply は plan 時に保存した artifact（tfplan）をそのまま適用するため、承認後に内容が変わりません
+
+### stg
+
+```
+PR マージ（stg ブランチへ）
   ↓
 plan（terraform plan -out=tfplan）
   ↓
 apply（terraform apply tfplan）
 ```
 
-- `pull_request: types: [closed]` + `merged == true` でトリガーします
 - apply workflow 内で tfplan を新規作成し、直後に apply します
 - PR 時の `terraform-plan.yml` で作成した tfplan を再利用しているわけではありません
-
-### prod
-
-```
-PR マージ（prod ブランチへ）
-  ↓
-prod-plan（terraform plan 結果を Step Summary に表示）
-  ↓
-[GitHub Environment `prod` の Required reviewers が内容を確認して承認]
-  ↓
-prod-apply（terraform apply）
-```
+- `environment: stg` によって Required reviewers の承認ゲートが apply 開始前に入ります
 
 ---
 

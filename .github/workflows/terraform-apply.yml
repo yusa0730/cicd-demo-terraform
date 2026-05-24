@@ -40,16 +40,133 @@ jobs:
               ;;
           esac
 
-  # dev / stg: plan + apply をリユーザブルワークフローで実行
-  apply-non-prod:
+  # stg: plan + apply をリユーザブルワークフローで実行
+  apply-stg:
     needs: resolve-environment
-    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment != 'prod'
+    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'stg'
     uses: ./.github/workflows/_reusable-terraform-apply.yml
     with:
-      environment: ${{ needs.resolve-environment.outputs.environment }}
-      working_directory: environments/${{ needs.resolve-environment.outputs.environment }}
+      environment: stg
+      working_directory: environments/stg
       checkout_ref: ${{ github.event.pull_request.base.ref }}
     secrets: inherit
+
+  # dev: plan → artifact 保存 → 承認ゲート → apply（prod と同じフロー）
+  dev-plan:
+    needs: resolve-environment
+    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'dev'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_DEV }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.3"
+          terraform_wrapper: false
+
+      - name: Install conftest
+        run: |
+          set -euxo pipefail
+          CONFTEST_VERSION="0.68.2"
+          curl --fail --location --show-error -o /tmp/conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf /tmp/conftest.tar.gz conftest
+          sudo mv conftest /usr/local/bin/conftest
+          conftest --version
+
+      - name: Terraform Init
+        working-directory: environments/dev
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: environments/dev
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Run conftest security checks
+        working-directory: environments/dev
+        run: |
+          terraform show -json tfplan > tfplan.json
+          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
+
+      - name: Show plan in Step Summary
+        working-directory: environments/dev
+        run: |
+          echo "### Terraform Plan — dev" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-dev-${{ github.run_id }}
+          path: environments/dev/tfplan
+          retention-days: 1
+          if-no-files-found: error
+
+  dev-apply:
+    needs:
+      - resolve-environment
+      - dev-plan
+    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'dev'
+    runs-on: ubuntu-latest
+
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.3"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: environments/dev
+        run: terraform init
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-dev-${{ github.run_id }}
+          path: environments/dev
+
+      - name: Verify plan artifact exists
+        working-directory: environments/dev
+        run: test -f tfplan
+
+      - name: Terraform Apply
+        working-directory: environments/dev
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show outputs
+        working-directory: environments/dev
+        run: |
+          echo "### Terraform Outputs — dev" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"       >> "$GITHUB_STEP_SUMMARY"
+          printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)" >> "$GITHUB_STEP_SUMMARY"
+          printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"         >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   # prod: plan → artifact 保存 → 承認ゲート → apply
   prod-plan:
@@ -76,9 +193,13 @@ jobs:
 
       - name: Install conftest
         run: |
-          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
-            | tar xz conftest
+          set -euxo pipefail
+          CONFTEST_VERSION="0.68.2"
+          curl --fail --location --show-error -o /tmp/conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf /tmp/conftest.tar.gz conftest
           sudo mv conftest /usr/local/bin/conftest
+          conftest --version
 
       - name: Terraform Init
         working-directory: environments/prod
