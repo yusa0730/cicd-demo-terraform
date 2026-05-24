@@ -61,3 +61,20 @@ jobs:
       environment: ${{ needs.resolve-environment.outputs.environment }}
       working_directory: environments/${{ needs.resolve-environment.outputs.environment }}
     secrets: inherit
+
+  # Branch Protection はこの job だけを Required check に設定する。
+  # reusable workflow の job 名が階層化されても check 名が安定する。
+  required:
+    needs:
+      - fmt
+      - plan
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All checks passed
+        run: |
+          if [[ "${{ needs.fmt.result }}" != "success" || "${{ needs.plan.result }}" != "success" ]]; then
+            echo "fmt: ${{ needs.fmt.result }}"
+            echo "plan: ${{ needs.plan.result }}"
+            exit 1
+          fi

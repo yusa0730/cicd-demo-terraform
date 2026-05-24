@@ -72,7 +72,9 @@ PR コメントに plan 結果を投稿（upsert）
 
 - `fmt` と `plan` は並列実行ではなく別 job として実行されます
 - PR コメントは `<!-- terraform-plan-{env} -->` マーカーで upsert します（同一 PR に複数回 push してもコメントが増えません）
-- `fmt` / `plan` の両 status checks が通過しないとマージできません（Branch Protection Rules）
+- Branch Protection Rules では `terraform-plan / required` 1つだけを Required check として登録します
+- `required` ジョブが `fmt` と `plan` の両方の成否を集約するため、reusable workflow による
+  check 名の階層化（`terraform-plan / plan / plan` のような形）に影響されません
 
 ---
 
@@ -140,6 +142,49 @@ destroy-apply（保存済み destroy plan を apply）
 ```
 
 > **注意**: destroy は不可逆な操作です。RDS などのデータが削除されます。
+
+---
+
+## GitHub Environment の保護設定
+
+### Required reviewers
+
+全環境のapply / destroyに**必須承認者**を設定しています。
+
+**設定場所:**
+```
+リポジトリ → Settings → Environments → [環境名] → Environment protection rules
+→ Required reviewers
+```
+
+**現在の設定:**
+
+| リポジトリ | Environment | Required reviewers |
+|---|---|---|
+| terraform-repo | `dev` | `yusa0730` |
+| terraform-repo | `stg` | `yusa0730` |
+| terraform-repo | `prod` | `yusa0730` |
+| app-repo | `dev` | `yusa0730` |
+| app-repo | `stg` | `yusa0730` |
+| app-repo | `prod` | `yusa0730` |
+
+**どのように機能するか:**
+
+workflow の `environment:` にEnvironment名を指定したジョブは、実行開始前に
+承認者の手動承認を要求します。承認されるまでジョブは `waiting` 状態で停止します。
+
+```
+terraform apply / ECS deploy の起動
+    ↓
+GitHub が Required reviewers へ承認通知
+    ↓
+承認者が Actions 画面で「Review deployments」→「Approve and deploy」
+    ↓
+apply / deploy ジョブが実行される
+```
+
+> この設定は `.github/workflows/*.yml` には書けません。
+> Settings 画面または GitHub REST API で設定します。
 
 ---
 

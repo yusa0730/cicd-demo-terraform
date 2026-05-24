@@ -57,7 +57,7 @@ GitHub Actions → AWS 認証に使う IAM ロールと OIDC Provider は `terra
 | `stg` | `AWS_TERRAFORM_ROLE_ARN` | bootstrap Step Summary の `terraform_apply_role_arn`（stg） |
 | `prod` | `AWS_TERRAFORM_ROLE_ARN` | bootstrap Step Summary の `terraform_apply_role_arn`（prod） |
 
-`prod` Environment には Required reviewers を設定します。
+`dev` / `stg` / `prod` 全環境に Required reviewers を設定します（後述）。
 
 ---
 
@@ -128,7 +128,7 @@ git push -u origin develop
 | Require approvals | ✅（1 以上） |
 | Require review from Code Owners | ✅ |
 | Require status checks to pass before merging | ✅ |
-| Required status checks | `terraform-plan / fmt`、`terraform-plan / plan` |
+| Required status checks | `terraform-plan / required` |
 
 ---
 
