@@ -98,6 +98,47 @@ jobs:
           terraform show -json tfplan > tfplan.json
           conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
 
+      - name: Detect destructive changes
+        id: destructive
+        working-directory: environments/dev
+        run: |
+          DELETE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete"])] | length' tfplan.json)
+          REPLACE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' tfplan.json)
+
+          echo "delete_count=${DELETE_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "replace_count=${REPLACE_COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [ "$DELETE_COUNT" -gt 0 ] || [ "$REPLACE_COUNT" -gt 0 ]; then
+            echo "has_destructive_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_destructive_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify Slack destructive plan
+        if: steps.destructive.outputs.has_destructive_changes == 'true'
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v3.0.3
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
+            text: "Terraform plan contains destructive changes - dev"
+            unfurl_links: false
+            unfurl_media: false
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: |
+                    :warning: *Terraform plan contains destructive changes*
+                    *Environment:* `dev`
+                    *Delete:* `${{ steps.destructive.outputs.delete_count }}`
+                    *Replace:* `${{ steps.destructive.outputs.replace_count }}`
+                    *Repository:* `${{ github.repository }}`
+                    *Actor:* `${{ github.actor }}`
+                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
+
       - name: Show plan in Step Summary
         working-directory: environments/dev
         run: |
@@ -167,6 +208,30 @@ jobs:
           printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)" >> "$GITHUB_STEP_SUMMARY"
           printf "ssm_prefix          = %s\n" "$(terraform output -raw -no-color ssm_prefix)"         >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify Slack apply result
+        if: always()
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v3.0.3
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
+            text: "Terraform apply ${{ job.status }} - dev"
+            unfurl_links: false
+            unfurl_media: false
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: |
+                    ${{ job.status == 'success' && ':white_check_mark:' || ':x:' }} *Terraform apply ${{ job.status }}*
+                    *Environment:* `dev`
+                    *Repository:* `${{ github.repository }}`
+                    *Branch:* `${{ github.event.pull_request.base.ref }}`
+                    *Actor:* `${{ github.actor }}`
+                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
 
   # prod: plan → artifact 保存 → 承認ゲート → apply
   prod-plan:
