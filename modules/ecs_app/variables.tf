@@ -52,3 +52,7 @@ variable "container_port" {
   type    = number
   default = 3000
 }
+
+variable "kms_key_arn" {
+  type = string
+}

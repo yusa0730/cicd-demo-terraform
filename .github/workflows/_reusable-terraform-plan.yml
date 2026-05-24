@@ -27,6 +27,10 @@ permissions:
   id-token: write
   contents: read
   pull-requests: write
+  issues: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   plan:
@@ -35,7 +39,7 @@ jobs:
       ENVIRONMENT: ${{ inputs.environment }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Select IAM role
         id: role
@@ -51,73 +55,93 @@ jobs:
           esac
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6.1.1
         with:
           role-to-assume: ${{ steps.role.outputs.arn }}
           aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4.0.1
         with:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
-      - name: Install tools (tfsec / checkov / tfcmt / conftest)
+      - name: Install checkov
+        run: python3 -m pip install --quiet checkov
+
+      - name: Install tfcmt
         run: |
-          # tfsec
-          curl -sL https://github.com/aquasecurity/tfsec/releases/download/v1.28.11/tfsec-linux-amd64 \
-            -o /tmp/tfsec && chmod +x /tmp/tfsec && sudo mv /tmp/tfsec /usr/local/bin/tfsec
+          set -euxo pipefail
+          TFCMT_VERSION="v4.14.15"
+          curl --fail --location --show-error -o /tmp/tfcmt.tar.gz \
+            "https://github.com/suzuki-shunsuke/tfcmt/releases/download/${TFCMT_VERSION}/tfcmt_linux_amd64.tar.gz"
+          tar xzf /tmp/tfcmt.tar.gz tfcmt
+          sudo mv tfcmt /usr/local/bin/tfcmt
+          tfcmt --version
 
-          # checkov
-          pip install --quiet checkov
-
-          # tfcmt
-          curl -sL https://github.com/suzuki-shunsuke/tfcmt/releases/download/v4.14.0/tfcmt_linux_amd64.tar.gz \
-            | tar xz tfcmt && sudo mv tfcmt /usr/local/bin/tfcmt
-
-          # conftest
-          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
-            | tar xz conftest && sudo mv conftest /usr/local/bin/conftest
+      - name: Install conftest
+        run: |
+          set -euxo pipefail
+          CONFTEST_VERSION="0.68.2"
+          curl --fail --location --show-error -o /tmp/conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf /tmp/conftest.tar.gz conftest
+          sudo mv conftest /usr/local/bin/conftest
+          conftest --version
 
       # --- 静的解析（terraform init 不要）---
 
-      - name: Run tfsec
-        id: tfsec
-        working-directory: ${{ inputs.working_directory }}
-        continue-on-error: true
-        run: |
-          tfsec . --no-colour 2>&1 | tee /tmp/tfsec-output.txt
+      - name: Setup Trivy
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        with:
+          version: v0.70.0
+          cache: true
 
-      - name: Show tfsec results in Step Summary
-        if: always()
+      - name: Run Trivy config scan
+        id: trivy
         run: |
-          if [ "${{ steps.tfsec.outcome }}" = "success" ]; then
-            echo "### tfsec — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          trivy config \
+            --tf-vars environments/${{ env.ENVIRONMENT }}/terraform.tfvars \
+            --ignorefile "$GITHUB_WORKSPACE/.trivyignore.yaml" \
+            --format table \
+            --exit-code 1 \
+            --output /tmp/trivy-output.txt \
+            environments/${{ env.ENVIRONMENT }}
+          TRIVY_EXIT_CODE=$?
+
+          if [ "$TRIVY_EXIT_CODE" -eq 0 ]; then
+            echo "### Trivy — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
             echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### tfsec — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Trivy — $ENVIRONMENT ❌" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat /tmp/tfsec-output.txt >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY" || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
+          cat /tmp/trivy-output.txt || true
+          exit "$TRIVY_EXIT_CODE"
 
-      - name: Run checkov
+      - name: Run Checkov
         id: checkov
+        if: always()
         working-directory: ${{ inputs.working_directory }}
-        continue-on-error: true
         run: |
-          checkov -d . --quiet --framework terraform 2>&1 | tee /tmp/checkov-output.txt
+          set -o pipefail
+          checkov -d . --quiet --framework terraform \
+            --config-file "$GITHUB_WORKSPACE/.checkov.yml" \
+            2>&1 | tee /tmp/checkov-output.txt
 
-      - name: Show checkov results in Step Summary
+      - name: Show Checkov results in Step Summary
         if: always()
         run: |
           if [ "${{ steps.checkov.outcome }}" = "success" ]; then
-            echo "### checkov — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Checkov — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
             echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### checkov — $ENVIRONMENT ⚠️" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Checkov — $ENVIRONMENT ❌" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY" || echo "checkov did not run or did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
