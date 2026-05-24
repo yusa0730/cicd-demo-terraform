@@ -1,0 +1,26 @@
+name: slack-test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  slack-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Slack test message
+        uses: slackapi/slack-github-action@v3.0.3
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
+            text: "Slack通知テスト"
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: |
+                    :white_check_mark: *Slack通知テスト成功*
+                    *Repository:* `${{ github.repository }}`
+                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>

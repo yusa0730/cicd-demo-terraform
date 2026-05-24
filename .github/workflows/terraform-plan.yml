@@ -17,14 +17,17 @@ permissions:
   pull-requests: write
   issues: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4.0.1
         with:
           terraform_version: "1.15.3"
 
@@ -75,34 +78,3 @@ jobs:
             echo "plan: ${{ needs.plan.result }}"
             exit 1
           fi
-
-  notify-plan-failure:
-    needs:
-      - fmt
-      - plan
-      - required
-    if: always() && needs.required.result == 'failure'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Notify Slack plan failure
-        continue-on-error: true
-        uses: slackapi/slack-github-action@v3.0.3
-        with:
-          method: chat.postMessage
-          token: ${{ secrets.SLACK_BOT_TOKEN }}
-          payload: |
-            channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform plan failed"
-            unfurl_links: false
-            unfurl_media: false
-            blocks:
-              - type: section
-                text:
-                  type: mrkdwn
-                  text: |
-                    :x: *Terraform plan failed*
-                    *Repository:* `${{ github.repository }}`
-                    *PR:* <${{ github.event.pull_request.html_url }}|#${{ github.event.pull_request.number }}>
-                    *Branch:* `${{ github.head_ref }} → ${{ github.base_ref }}`
-                    *Actor:* `${{ github.actor }}`
-                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>

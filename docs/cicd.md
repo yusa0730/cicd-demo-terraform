@@ -72,37 +72,49 @@ PR コメントに plan 結果を投稿（upsert）
 
 - `fmt` と `plan` は並列実行ではなく別 job として実行されます
 - PR コメントは `<!-- terraform-plan-{env} -->` マーカーで upsert します（同一 PR に複数回 push してもコメントが増えません）
-- `fmt` / `plan` の両 status checks が通過しないとマージできません（Branch Protection Rules）
+- Branch Protection Rules では `terraform-plan / required` 1つだけを Required check として登録します
+- `required` ジョブが `fmt` と `plan` の両方の成否を集約するため、reusable workflow による
+  check 名の階層化（`terraform-plan / plan / plan` のような形）に影響されません
 
 ---
 
 ## terraform-apply の動作
 
-### dev / stg
+### dev / prod（同じフロー）
 
 ```
-PR マージ（develop / stg ブランチへ）
+PR マージ（develop / prod ブランチへ）
+  ↓
+dev-plan / prod-plan
+  └─ conftest セキュリティチェック
+  └─ plan 結果を Step Summary に表示
+  └─ tfplan を artifact として保存
+  ↓
+[GitHub Environment の Required reviewers が内容を確認して承認]
+  ↓
+dev-apply / prod-apply（保存済み tfplan を apply）
+```
+
+- `pull_request: types: [closed]` + `merged == true` でトリガーします
+- plan と apply は別 job として実行されます
+- plan は plan 専用 IAM Role（`AWS_TERRAFORM_PLAN_ROLE_ARN_*`）で実行します
+- apply は Environment Secret の apply 専用 IAM Role（`AWS_TERRAFORM_ROLE_ARN`）で実行します
+- 承認者は Step Summary の plan 内容を確認してから承認できます
+- 承認された apply は plan 時に保存した artifact（tfplan）をそのまま適用するため、承認後に内容が変わりません
+
+### stg
+
+```
+PR マージ（stg ブランチへ）
   ↓
 plan（terraform plan -out=tfplan）
   ↓
 apply（terraform apply tfplan）
 ```
 
-- `pull_request: types: [closed]` + `merged == true` でトリガーします
 - apply workflow 内で tfplan を新規作成し、直後に apply します
 - PR 時の `terraform-plan.yml` で作成した tfplan を再利用しているわけではありません
-
-### prod
-
-```
-PR マージ（prod ブランチへ）
-  ↓
-prod-plan（terraform plan 結果を Step Summary に表示）
-  ↓
-[GitHub Environment `prod` の Required reviewers が内容を確認して承認]
-  ↓
-prod-apply（terraform apply）
-```
+- `environment: stg` によって Required reviewers の承認ゲートが apply 開始前に入ります
 
 ---
 
@@ -130,6 +142,49 @@ destroy-apply（保存済み destroy plan を apply）
 ```
 
 > **注意**: destroy は不可逆な操作です。RDS などのデータが削除されます。
+
+---
+
+## GitHub Environment の保護設定
+
+### Required reviewers
+
+全環境のapply / destroyに**必須承認者**を設定しています。
+
+**設定場所:**
+```
+リポジトリ → Settings → Environments → [環境名] → Environment protection rules
+→ Required reviewers
+```
+
+**現在の設定:**
+
+| リポジトリ | Environment | Required reviewers |
+|---|---|---|
+| terraform-repo | `dev` | `yusa0730` |
+| terraform-repo | `stg` | `yusa0730` |
+| terraform-repo | `prod` | `yusa0730` |
+| app-repo | `dev` | `yusa0730` |
+| app-repo | `stg` | `yusa0730` |
+| app-repo | `prod` | `yusa0730` |
+
+**どのように機能するか:**
+
+workflow の `environment:` にEnvironment名を指定したジョブは、実行開始前に
+承認者の手動承認を要求します。承認されるまでジョブは `waiting` 状態で停止します。
+
+```
+terraform apply / ECS deploy の起動
+    ↓
+GitHub が Required reviewers へ承認通知
+    ↓
+承認者が Actions 画面で「Review deployments」→「Approve and deploy」
+    ↓
+apply / deploy ジョブが実行される
+```
+
+> この設定は `.github/workflows/*.yml` には書けません。
+> Settings 画面または GitHub REST API で設定します。
 
 ---
 

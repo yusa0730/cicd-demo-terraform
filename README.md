@@ -57,7 +57,7 @@ GitHub Actions → AWS 認証に使う IAM ロールと OIDC Provider は `terra
 | `stg` | `AWS_TERRAFORM_ROLE_ARN` | bootstrap Step Summary の `terraform_apply_role_arn`（stg） |
 | `prod` | `AWS_TERRAFORM_ROLE_ARN` | bootstrap Step Summary の `terraform_apply_role_arn`（prod） |
 
-`prod` Environment には Required reviewers を設定します。
+`dev` / `stg` / `prod` 全環境に Required reviewers を設定します（後述）。
 
 ---
 
@@ -77,7 +77,35 @@ git push -u origin develop
 
 ### Step 3: CODEOWNERS を設定する
 
-`.github/CODEOWNERS` の `@your-org/infra-approvers` を実際の Team 名に変更します。
+現在は個人アカウント（`@yusa0730`）で設定済みです。
+
+```
+/environments/      @yusa0730
+/modules/           @yusa0730
+/.github/workflows/ @yusa0730
+/.github/CODEOWNERS @yusa0730
+```
+
+#### Team 運用への移行（Organization がある場合）
+
+複数人でレビューを運用する際は、個人ユーザーの代わりに GitHub Team を指定します。
+
+**Team の作成手順**
+
+```
+1. github.com/<your-org> → Teams → New team
+     Team name: infra-approvers
+     Visibility: Visible（← CODEOWNERS 参照に必須）
+
+2. Teams → infra-approvers → Members → Add a member
+     → レビュアーを追加
+
+3. Teams → infra-approvers → Repositories → Add repository
+     → このリポジトリを追加
+     → Role: Write（← CODEOWNERS 機能に必須）
+```
+
+**CODEOWNERS の書き換え**
 
 ```
 /environments/      @your-org/infra-approvers
@@ -86,9 +114,7 @@ git push -u origin develop
 /.github/CODEOWNERS @your-org/infra-approvers
 ```
 
-> Team を CODEOWNERS に指定するには以下が必要です：
-> - Team がこの repository に **write 権限**を持っている
-> - Team visibility が **visible** である
+> `@your-org` は Organization 名、`infra-approvers` は Team 名に置き換えてください。
 
 ---
 
@@ -102,7 +128,7 @@ git push -u origin develop
 | Require approvals | ✅（1 以上） |
 | Require review from Code Owners | ✅ |
 | Require status checks to pass before merging | ✅ |
-| Required status checks | `terraform-plan / fmt`、`terraform-plan / plan` |
+| Required status checks | `terraform-plan / required` |
 
 ---
 

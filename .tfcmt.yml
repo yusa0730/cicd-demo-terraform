@@ -1,29 +1,61 @@
 ci: github-actions
+
 notifier:
   github:
     token: $GITHUB_TOKEN
+
 terraform:
   plan:
     template: |
       ## Terraform Plan — `{{ .Vars.env }}`
-      {{- if .HasDestroy }}
 
+      {{- if .HasDestroy }}
       > [!WARNING]
       > このplanにはリソースの削除が含まれます。内容を十分に確認してください。
       {{- end }}
 
       {{ .Result }}
 
+      {{- if .ChangedResult }}
+
       <details><summary>詳細を展開</summary>
 
-      ```
-      {{ .Body }}
-      ```
+      {{ wrapCode .ChangedResult }}
 
       </details>
-    when_add_or_change:
-      label:
-        - "terraform:changed"
+      {{- end }}
+
+      {{- if .ChangeOutsideTerraform }}
+
+      <details><summary>Terraform外で変更されたリソース</summary>
+
+      {{ wrapCode .ChangeOutsideTerraform }}
+
+      </details>
+      {{- end }}
+
+      {{- if .Warning }}
+
+      ## Warnings
+
+      {{ wrapCode .Warning }}
+      {{- end }}
+
+      {{- if .ErrorMessages }}
+
+      ## Errors
+      {{- range .ErrorMessages }}
+      - {{ . }}
+      {{- end }}
+      {{- end }}
+
+      {{- if .Link }}
+
+      [詳細は Actions の Step Summary を参照]({{ .Link }})
+      {{- end }}
+
+    when_add_or_update_only:
+      label: "terraform:changed"
+
     when_destroy:
-      label:
-        - "terraform:destroy"
+      label: "terraform:destroy"
