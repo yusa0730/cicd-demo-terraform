@@ -1,0 +1,16 @@
+misconfigurations:
+  # Demo ALB is intentionally public to expose the application over HTTP without a custom domain.
+  - id: AVD-AWS-0053
+    statement: "Demo ALB is intentionally internet-facing; no private ALB required for this demo."
+
+  # HTTPS listener requires ACM certificate and custom domain, which are out of scope for this CI/CD demo.
+  - id: AVD-AWS-0054
+    statement: "HTTPS/ACM/custom domain setup is out of scope for this CI/CD demo."
+
+  # App uses password-based authentication to the database; IAM Database Authentication is not configured.
+  - id: AVD-AWS-0176
+    statement: "App uses password-based auth; IAM Database Authentication is out of scope for this demo."
+
+  # Deletion protection is disabled to support terraform destroy workflows in dev/stg environments.
+  - id: AVD-AWS-0177
+    statement: "Deletion protection disabled to allow destroy workflows in dev/stg."
