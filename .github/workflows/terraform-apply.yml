@@ -76,9 +76,13 @@ jobs:
 
       - name: Install conftest
         run: |
-          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
-            | tar xz conftest
+          set -euxo pipefail
+          CONFTEST_VERSION="0.68.2"
+          curl --fail --location --show-error -o /tmp/conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf /tmp/conftest.tar.gz conftest
           sudo mv conftest /usr/local/bin/conftest
+          conftest --version
 
       - name: Terraform Init
         working-directory: environments/dev
@@ -189,9 +193,13 @@ jobs:
 
       - name: Install conftest
         run: |
-          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz \
-            | tar xz conftest
+          set -euxo pipefail
+          CONFTEST_VERSION="0.68.2"
+          curl --fail --location --show-error -o /tmp/conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf /tmp/conftest.tar.gz conftest
           sudo mv conftest /usr/local/bin/conftest
+          conftest --version
 
       - name: Terraform Init
         working-directory: environments/prod
