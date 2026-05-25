@@ -135,7 +135,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform destroy plan created - ${{ env.ENVIRONMENT }}"
+            text: "Terraform destroy plan created — ${{ env.ENVIRONMENT }}"
             unfurl_links: false
             unfurl_media: false
             blocks:
@@ -204,7 +204,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform destroy ${{ job.status }} - ${{ env.ENVIRONMENT }}"
+            text: "Terraform destroy ${{ job.status == 'success' && 'success' || 'failure' }} — ${{ env.ENVIRONMENT }}"
             unfurl_links: false
             unfurl_media: false
             blocks:
