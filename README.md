@@ -143,8 +143,9 @@ git push -u origin develop
 
 2. CODEOWNERS (infra-approvers) が approve → develop へ merge する
    → terraform-apply が自動実行される
-   → apply workflow 内で terraform plan -out=tfplan を作成し、
-     直後に terraform apply tfplan を実行する
+   → dev-plan が実行され、tfplan が artifact として保存される
+   → GitHub Environment `dev` の Required reviewers による承認後、
+     dev-apply が保存済み tfplan を apply する
    → dev 環境に apply される
 
 3. develop → stg へ PR を出して merge する
@@ -156,9 +157,6 @@ git push -u origin develop
    → prod-apply で保存済み tfplan を apply する
    → prod 環境に apply される
 ```
-
-> `terraform-apply.yml` での tfplan は apply workflow 内で新規に作成します。
-> PR 時の `terraform-plan.yml` で作成した tfplan を再利用しているわけではありません。
 
 ---
 
