@@ -127,6 +127,28 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+      - name: Notify Slack destroy plan created
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v3.0.3
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
+            text: "Terraform destroy plan created - ${{ env.ENVIRONMENT }}"
+            unfurl_links: false
+            unfurl_media: false
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: |
+                    :rotating_light: *Terraform destroy plan created — awaiting approval*
+                    *Environment:* `${{ env.ENVIRONMENT }}`
+                    *Repository:* `${{ github.repository }}`
+                    *Actor:* `${{ github.actor }}`
+                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
+
   destroy-apply:
     needs:
       - validate-input
