@@ -95,7 +95,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform plan failed"
+            text: "Terraform plan failed — ${{ github.base_ref }}"
             unfurl_links: false
             unfurl_media: false
             blocks:

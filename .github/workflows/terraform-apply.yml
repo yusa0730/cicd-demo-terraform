@@ -119,7 +119,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform plan contains destructive changes - dev"
+            text: "Terraform destructive plan — dev"
             unfurl_links: false
             unfurl_media: false
             blocks:
@@ -218,7 +218,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform apply ${{ job.status }} - dev"
+            text: "Terraform apply ${{ job.status == 'success' && 'success' || 'failure' }} — dev"
             unfurl_links: false
             unfurl_media: false
             blocks:
@@ -301,7 +301,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform plan contains destructive changes - prod"
+            text: "Terraform destructive plan — prod"
             unfurl_links: false
             unfurl_media: false
             blocks:
@@ -402,7 +402,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform apply ${{ job.status }} - prod"
+            text: "Terraform apply ${{ job.status == 'success' && 'success' || 'failure' }} — prod"
             unfurl_links: false
             unfurl_media: false
             blocks:
