@@ -11,7 +11,7 @@ resource "aws_secretsmanager_secret" "database_url" {
 
 resource "aws_secretsmanager_secret_version" "database_url" {
   secret_id     = aws_secretsmanager_secret.database_url.id
-  secret_string = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.this.address}:${aws_db_instance.this.port}/${var.db_name}?sslmode=require"
+  secret_string = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.this.address}:${aws_db_instance.this.port}/${var.db_name}"
 }
 
 resource "aws_db_subnet_group" "this" {
