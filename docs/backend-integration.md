@@ -38,10 +38,16 @@ exit code が 0 以外なら ECS service deploy を中断
 | `/ecs-demo/<env>/ecr-repository-url` | Docker イメージの push 先 ECR URL |
 | `/ecs-demo/<env>/ecs-cluster-name` | デプロイ先 ECS クラスター名 |
 | `/ecs-demo/<env>/ecs-service-name` | 更新対象 ECS サービス名 |
-| `/ecs-demo/<env>/task-definition-family` | タスク定義のファミリー名 |
+| `/ecs-demo/<env>/task-definition-family` | タスク定義のファミリー名（deploy workflow が新 revision を登録する際に参照） |
 | `/ecs-demo/<env>/ecs-subnet-ids` | migration task 実行サブネット（private, カンマ区切り） |
 | `/ecs-demo/<env>/ecs-security-group-id` | migration task のセキュリティグループ ID |
 | `/ecs-demo/<env>/alb-dns-name` | スモークテストの接続先 ALB DNS 名 |
+
+> **`migration-task-def-arn` について**: このパラメータは Terraform が書き出しますが、
+> 現在の `cicd-demo-backend` deploy workflow では使用していません。
+> deploy workflow は `task-definition-family` から最新リビジョンを取得し、
+> イメージを差し替えた新リビジョンをその場で登録して migration を実行します。
+> `migration-task-def-arn` は将来削除予定の legacy パラメータです。
 
 SSM Parameter は SecureString 型（KMS CMK 暗号化）です。
 `cicd-demo-backend` の deploy role には `ssm:GetParameter` と `kms:Decrypt` が必要です。

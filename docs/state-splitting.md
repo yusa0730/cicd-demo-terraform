@@ -112,6 +112,15 @@ terraform {
 | PR 2 | `terraform state mv` による state 移行 + workflow 更新（dev） |
 | PR 3 | stg / prod への展開 |
 
+## State 移行時の前提条件
+
+> **重要**: state 移行は一度ミスすると state が壊れる可能性があります。以下を必ず守ってください。
+>
+> - この手順は **dev 環境でのみ** 先に実施する。stg / prod は dev で検証済みの手順を使う
+> - 実行前に GitHub Actions の workflow を一時的に止め、他の terraform apply / destroy が走っていないことを確認する
+> - 移行後は必ず `terraform plan` を実行し、**No changes** であることを確認してからマージする
+> - 意図しない `add` / `destroy` / `replace` が出た場合は移行手順を見直す（マージしない）
+
 ## State 移行手順（PR 2 で実施）
 
 ```bash
