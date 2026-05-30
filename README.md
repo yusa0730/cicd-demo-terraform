@@ -214,3 +214,5 @@ git push -u origin develop
 |------------|------|
 | [アーキテクチャ](docs/architecture.md) | AWS 構成・ネットワーク・ECS・RDS・IAM の詳細 |
 | [CI/CD](docs/cicd.md) | Workflows 一覧・Secrets 一覧・destroy 手順 |
+| [State 分離](docs/state-splitting.md) | base/data/app の構成・apply 順序・移行手順 |
+| [backend repo 連携](docs/backend-integration.md) | DB migration の責務分離・SSM Parameter 一覧・IAM 権限 |
