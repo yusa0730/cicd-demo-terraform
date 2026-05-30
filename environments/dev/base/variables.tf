@@ -1,28 +1,35 @@
 variable "project" {
-  type = string
+  description = "プロジェクト名（name_prefix の先頭部分）"
+  type        = string
 }
 
 variable "env" {
-  type = string
+  description = "環境名（dev / stg / prod）"
+  type        = string
 }
 
 variable "aws_region" {
-  type    = string
-  default = "ap-northeast-1"
+  description = "デプロイ先 AWS リージョン"
+  type        = string
+  default     = "ap-northeast-1"
 }
 
 variable "vpc_cidr" {
-  type = string
+  description = "VPC の CIDR ブロック"
+  type        = string
 }
 
 variable "availability_zones" {
-  type = list(string)
+  description = "サブネットを作成するアベイラビリティゾーンのリスト"
+  type        = list(string)
 }
 
 variable "public_subnet_cidrs" {
-  type = list(string)
+  description = "パブリックサブネットの CIDR ブロックのリスト（availability_zones と順序を合わせること）"
+  type        = list(string)
 }
 
 variable "private_subnet_cidrs" {
-  type = list(string)
+  description = "プライベートサブネットの CIDR ブロックのリスト（availability_zones と順序を合わせること）"
+  type        = list(string)
 }

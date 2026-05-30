@@ -41,6 +41,39 @@ policy/               # conftest OPAポリシー
 .checkov.yml          # Checkov skip設定（理由付きのみ許可）
 ```
 
+## Terraform コーディング規約
+
+### variable ブロックの書き方
+
+`variable` ブロックには必ず `description` と `type` を記述する。
+
+```hcl
+# 良い例
+variable "vpc_cidr" {
+  description = "VPC の CIDR ブロック"
+  type        = string
+}
+
+variable "desired_count" {
+  description = "ECS サービスの希望タスク数"
+  type        = number
+  default     = 1
+}
+
+# 悪い例（description / type が欠けている）
+variable "vpc_cidr" {}
+variable "desired_count" {
+  default = 1
+}
+```
+
+記述順: `description` → `type` → `default`（`default` がある場合）
+
+### `=` 記号の整列（terraform fmt 準拠）
+
+`terraform fmt` のルールに従い、同一ブロック内の `=` を最長キーに揃える。
+`jsonencode` 内の Statement ブロックも同様に揃える（`Sid`, `Effect`, `Action`, `Resource`）。
+
 ## 重要な設計判断
 
 - dev / stg / prod は別 AWS アカウント前提

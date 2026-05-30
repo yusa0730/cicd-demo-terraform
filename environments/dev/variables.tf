@@ -1,57 +1,69 @@
 variable "project" {
-  type = string
+  description = "プロジェクト名（name_prefix の先頭部分）"
+  type        = string
 }
 
 variable "env" {
-  type = string
+  description = "環境名（dev / stg / prod）"
+  type        = string
 }
 
 variable "aws_region" {
-  type    = string
-  default = "ap-northeast-1"
+  description = "デプロイ先 AWS リージョン"
+  type        = string
+  default     = "ap-northeast-1"
 }
 
 variable "vpc_cidr" {
-  type = string
+  description = "VPC の CIDR ブロック"
+  type        = string
 }
 
 variable "availability_zones" {
-  type = list(string)
+  description = "サブネットを作成するアベイラビリティゾーンのリスト"
+  type        = list(string)
 }
 
 variable "public_subnet_cidrs" {
-  type = list(string)
+  description = "パブリックサブネットの CIDR ブロックのリスト（availability_zones と順序を合わせること）"
+  type        = list(string)
 }
 
 variable "private_subnet_cidrs" {
-  type = list(string)
+  description = "プライベートサブネットの CIDR ブロックのリスト（availability_zones と順序を合わせること）"
+  type        = list(string)
 }
 
 variable "db_name" {
-  type = string
+  description = "PostgreSQL データベース名"
+  type        = string
 }
 
 variable "db_username" {
-  type = string
+  description = "PostgreSQL マスターユーザー名"
+  type        = string
 }
 
 variable "task_cpu" {
-  type    = string
-  default = "256"
+  description = "ECS タスクの CPU ユニット数（256 / 512 / 1024 等）"
+  type        = string
+  default     = "256"
 }
 
 variable "task_memory" {
-  type    = string
-  default = "512"
+  description = "ECS タスクのメモリ量（MiB）"
+  type        = string
+  default     = "512"
 }
 
 variable "desired_count" {
-  type    = number
-  default = 1
+  description = "ECS サービスの希望タスク数"
+  type        = number
+  default     = 1
 }
 
 variable "app_image_uri" {
-  type    = string
-  default = "public.ecr.aws/nginx/nginx:latest"
+  description = "ECS タスクで使用するコンテナイメージ URI（初回デプロイ時のデフォルト値）"
+  type        = string
+  default     = "public.ecr.aws/nginx/nginx:latest"
 }
-

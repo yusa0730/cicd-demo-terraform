@@ -1,20 +1,25 @@
 variable "project" {
-  type = string
+  description = "プロジェクト名（name_prefix の先頭部分）"
+  type        = string
 }
 
 variable "env" {
-  type = string
+  description = "環境名（dev / stg / prod）"
+  type        = string
 }
 
 variable "aws_region" {
-  type    = string
-  default = "ap-northeast-1"
+  description = "デプロイ先 AWS リージョン"
+  type        = string
+  default     = "ap-northeast-1"
 }
 
 variable "db_name" {
-  type = string
+  description = "PostgreSQL データベース名"
+  type        = string
 }
 
 variable "db_username" {
-  type = string
+  description = "PostgreSQL マスターユーザー名"
+  type        = string
 }
