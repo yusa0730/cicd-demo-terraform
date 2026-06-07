@@ -11,6 +11,13 @@ data "terraform_remote_state" "base" {
     key    = "ecs-demo/dev/base/terraform.tfstate"
     region = "ap-northeast-1"
   }
+  # Defaults allow plan to succeed before base stack is first applied (bootstrapping).
+  defaults = {
+    kms_key_arn        = ""
+    vpc_id             = ""
+    public_subnet_ids  = [""]
+    private_subnet_ids = ["", ""]
+  }
 }
 
 data "terraform_remote_state" "data" {
@@ -19,6 +26,11 @@ data "terraform_remote_state" "data" {
     bucket = "cicd-demo-terraform-dev"
     key    = "ecs-demo/dev/data/terraform.tfstate"
     region = "ap-northeast-1"
+  }
+  # Defaults allow plan to succeed before data stack is first applied (bootstrapping).
+  defaults = {
+    database_url_secret_arn = ""
+    rds_security_group_id   = ""
   }
 }
 

@@ -218,14 +218,11 @@ jobs:
                     *Actor:* `${{ github.actor }}`
                     *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
 
-      - name: Upload plan artifacts
+      - name: Upload plan artifact — base
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: tfplan-dev-${{ github.run_id }}
-          path: |
-            environments/dev/base/tfplan
-            environments/dev/data/tfplan
-            environments/dev/app/tfplan
+          name: tfplan-dev-base-${{ github.run_id }}
+          path: environments/dev/base/tfplan
           retention-days: 1
           if-no-files-found: error
 
@@ -255,10 +252,11 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
-      - name: Download plan artifacts
+      - name: Download plan artifact — base
         uses: actions/download-artifact@v8.0.1
         with:
-          name: tfplan-dev-${{ github.run_id }}
+          name: tfplan-dev-base-${{ github.run_id }}
+          path: environments/dev/base
 
       - name: Terraform Init — base
         working-directory: environments/dev/base
@@ -274,21 +272,25 @@ jobs:
         working-directory: environments/dev/data
         run: terraform init
 
-      - name: Verify & Apply — data
+      - name: Terraform Plan — data
         working-directory: environments/dev/data
-        run: |
-          test -f tfplan
-          terraform apply -auto-approve tfplan
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Apply — data
+        working-directory: environments/dev/data
+        run: terraform apply -auto-approve tfplan
 
       - name: Terraform Init — app
         working-directory: environments/dev/app
         run: terraform init
 
-      - name: Verify & Apply — app
+      - name: Terraform Plan — app
         working-directory: environments/dev/app
-        run: |
-          test -f tfplan
-          terraform apply -auto-approve tfplan
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Apply — app
+        working-directory: environments/dev/app
+        run: terraform apply -auto-approve tfplan
 
       - name: Show outputs — app
         working-directory: environments/dev/app
