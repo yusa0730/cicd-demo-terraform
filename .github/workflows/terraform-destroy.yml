@@ -201,6 +201,48 @@ jobs:
           release_if_stale "data"
           release_if_stale "app"
 
+      - name: Stop running ECS tasks before destroy
+        run: |
+          set -euo pipefail
+          CLUSTER="ecs-demo-${ENVIRONMENT}-cluster"
+
+          SERVICES=$(aws ecs list-services \
+            --cluster "$CLUSTER" \
+            --query "serviceArns[]" \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$SERVICES" ]; then
+            echo "ECS サービスなし — スキップ"
+            exit 0
+          fi
+
+          for SERVICE_ARN in $SERVICES; do
+            SERVICE_NAME=$(basename "$SERVICE_ARN")
+            echo "サービス: $SERVICE_NAME のタスクを停止中..."
+
+            TASKS=$(aws ecs list-tasks \
+              --cluster "$CLUSTER" \
+              --service-name "$SERVICE_NAME" \
+              --query "taskArns[]" \
+              --output text 2>/dev/null || echo "")
+
+            if [ -z "$TASKS" ]; then
+              echo "[$SERVICE_NAME] 実行中タスクなし"
+              continue
+            fi
+
+            for TASK in $TASKS; do
+              aws ecs stop-task \
+                --cluster "$CLUSTER" \
+                --task "$TASK" \
+                --reason "terraform destroy の前処理として停止" \
+                --region "$AWS_REGION" > /dev/null
+              echo "[$SERVICE_NAME] 停止: $TASK"
+            done
+          done
+
+          echo "ECS タスク停止完了"
+
       - name: Empty ECR repository before destroy
         run: |
           set -euo pipefail
