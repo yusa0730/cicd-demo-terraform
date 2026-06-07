@@ -26,7 +26,7 @@ variable "db_username" {
 variable "engine_version" {
   description = "Aurora PostgreSQL エンジンバージョン（例: \"13.20\", \"16.4\"）。メジャーバージョンアップ時は engine_family と合わせて変更する"
   type        = string
-  default     = "13.20"
+  default     = "13.9"
 }
 
 variable "engine_family" {
