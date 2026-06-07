@@ -57,6 +57,7 @@ module "bastion" {
   vpc_id                  = data.terraform_remote_state.base.outputs.vpc_id
   subnet_id               = data.terraform_remote_state.base.outputs.private_subnet_ids[0]
   database_url_secret_arn = data.terraform_remote_state.data.outputs.database_url_secret_arn
+  kms_key_arn             = data.terraform_remote_state.base.outputs.kms_key_arn
 }
 
 module "ecs_app" {

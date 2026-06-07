@@ -45,6 +45,12 @@ resource "aws_iam_role_policy" "secrets_read" {
         Effect   = "Allow"
         Action   = "secretsmanager:GetSecretValue"
         Resource = var.database_url_secret_arn
+      },
+      {
+        Sid      = "AllowKmsDecrypt"
+        Effect   = "Allow"
+        Action   = "kms:Decrypt"
+        Resource = var.kms_key_arn
       }
     ]
   })
