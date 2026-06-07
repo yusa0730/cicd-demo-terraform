@@ -1,6 +1,7 @@
 resource "aws_ecr_repository" "this" {
   name                 = var.name_prefix
   image_tag_mutability = "IMMUTABLE"
+  force_destroy        = true
 
   encryption_configuration {
     encryption_type = "KMS"
