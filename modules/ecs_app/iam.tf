@@ -27,9 +27,16 @@ resource "aws_iam_role_policy" "execution_secrets" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid      = "GetDatabaseSecret"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = [var.database_url_secret_arn]
+      },
+      {
+        Sid      = "DecryptWithCMK"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [var.kms_key_arn]
       }
     ]
   })

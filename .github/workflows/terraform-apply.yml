@@ -92,16 +92,12 @@ jobs:
         working-directory: environments/dev
         run: terraform plan -no-color -out=tfplan
 
-      - name: Run conftest security checks
-        working-directory: environments/dev
-        run: |
-          terraform show -json tfplan > tfplan.json
-          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
-
       - name: Detect destructive changes
         id: destructive
         working-directory: environments/dev
         run: |
+          terraform show -json tfplan > tfplan.json
+
           DELETE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete"])] | length' tfplan.json)
           REPLACE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' tfplan.json)
 
@@ -123,7 +119,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform plan contains destructive changes - dev"
+            text: "Terraform destructive plan — dev"
             unfurl_links: false
             unfurl_media: false
             blocks:
@@ -138,6 +134,10 @@ jobs:
                     *Repository:* `${{ github.repository }}`
                     *Actor:* `${{ github.actor }}`
                     *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
+
+      - name: Run conftest security checks
+        working-directory: environments/dev
+        run: conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
 
       - name: Show plan in Step Summary
         working-directory: environments/dev
@@ -218,7 +218,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform apply ${{ job.status }} - dev"
+            text: "Terraform apply ${{ job.status == 'success' && 'success' || 'failure' }} — dev"
             unfurl_links: false
             unfurl_media: false
             blocks:
@@ -301,7 +301,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform plan contains destructive changes - prod"
+            text: "Terraform destructive plan — prod"
             unfurl_links: false
             unfurl_media: false
             blocks:
@@ -402,7 +402,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
-            text: "Terraform apply ${{ job.status }} - prod"
+            text: "Terraform apply ${{ job.status == 'success' && 'success' || 'failure' }} — prod"
             unfurl_links: false
             unfurl_media: false
             blocks:

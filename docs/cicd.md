@@ -7,7 +7,7 @@
 | ファイル | トリガー | 内容 |
 |---------|---------|------|
 | `terraform-plan.yml` | PR（develop / stg / prod 向け） | fmt チェック・plan を実行。tfcmt で PR コメント通知（削除があれば警告ラベル付き）、conftest でセキュリティポリシーチェック |
-| `terraform-apply.yml` | PR マージ（develop / stg / prod） | マージされた PR をトリガーに apply を実行。prod のみ plan 確認後に承認ゲートを挟む |
+| `terraform-apply.yml` | PR マージ（develop / stg / prod） | マージされた PR をトリガーに apply を実行。dev / prod は plan → artifact → 承認ゲート → apply。stg は plan + apply を同一 job で実行 |
 | `terraform-destroy.yml` | 手動（`workflow_dispatch`） | 選択した環境のリソースを destroy。dev/stg: `destroy`、prod: `destroy-prod` と入力して確認後に実行 |
 | `_reusable-terraform-plan.yml` | `workflow_call` | PR plan の共通実装（terraform-plan.yml から呼び出し） |
 | `_reusable-terraform-apply.yml` | `workflow_call` | dev/stg apply の共通実装（terraform-apply.yml から呼び出し） |
@@ -102,7 +102,7 @@ dev-apply / prod-apply（保存済み tfplan を apply）
 - 承認者は Step Summary の plan 内容を確認してから承認できます
 - 承認された apply は plan 時に保存した artifact（tfplan）をそのまま適用するため、承認後に内容が変わりません
 
-### stg
+### stg（軽量運用）
 
 ```
 PR マージ（stg ブランチへ）
@@ -115,6 +115,8 @@ apply（terraform apply tfplan）
 - apply workflow 内で tfplan を新規作成し、直後に apply します
 - PR 時の `terraform-plan.yml` で作成した tfplan を再利用しているわけではありません
 - `environment: stg` によって Required reviewers の承認ゲートが apply 開始前に入ります
+
+> **stg の位置づけ:** stg は現時点では dev / prod と同じ artifact + 承認ゲートフローは適用せず、軽量な plan-then-apply を維持します。stg を本番前の厳密な最終検証環境として運用する段階になった場合は、dev / prod と同じフローへ移行します。
 
 ---
 
@@ -281,3 +283,123 @@ base-destroy → [承認] → 実行
 
 > 依存関係があるため、app を消す前に data / base を消すと参照エラーになります。
 > 必ず逆順で実行してください。
+
+---
+
+## Slack 通知
+
+### 概要
+
+[slackapi/slack-github-action](https://github.com/slackapi/slack-github-action) v3 の `chat.postMessage` を使い、Terraform CI/CD の重要イベントを Slack へ通知します。通知先は 1 チャンネルに集約し、メッセージ内の種別・環境・結果で識別します。
+
+### 通知先・Secrets
+
+| Secret 名 | 用途 | 設定場所 |
+|---|---|---|
+| `SLACK_BOT_TOKEN` | Slack Bot Token（`xoxb-...`） | Repository Secrets |
+| `SLACK_CHANNEL_ID_TERRAFORM` | 通知先チャンネル ID | Repository Secrets |
+
+通知先チャンネル: `#all-terraform-notification-test`
+
+> チャンネル ID は Slack のチャンネル詳細画面の下部に表示される `C` で始まる文字列です（チャンネル名 `#...` ではありません）。
+
+> Slack Bot は通知先チャンネルに参加している必要があります（`/invite @ボット名`）。
+
+### 通知一覧
+
+| 種別 | アイコン | トリガー | 実装箇所 |
+|---|---|---|---|
+| apply 成功 | ✅ | dev-apply / prod-apply 完了 | `terraform-apply.yml` |
+| apply 失敗 | ❌ | dev-apply / prod-apply 失敗 | 同上（`if: always()` で必ず送信） |
+| plan 失敗 | ❌ | PR の terraform-plan が失敗 | `terraform-plan.yml`（`notify-plan-failure` job） |
+| destructive changes | ⚠️ | plan に delete / replace が含まれる | `terraform-apply.yml` dev-plan / prod-plan |
+| destroy plan 作成 | 🚨 | destroy-plan 完了・承認待ち開始 | `terraform-destroy.yml` destroy-plan |
+| destroy 成功/失敗 | 🚨 | terraform-destroy 完了 | `terraform-destroy.yml` destroy-apply |
+
+> stg の apply 通知は現時点では対象外です（stg は軽量運用を維持）。
+
+### 通知メッセージの内容
+
+各通知には以下の情報を含みます。
+
+| フィールド | 内容 |
+|---|---|
+| 種別・結果 | アイコン + タイトル（例: ✅ *Terraform apply success*） |
+| Environment | `dev` / `stg` / `prod` |
+| Repository | リポジトリ名 |
+| Branch / PR | ブランチ名または PR リンク |
+| Actor | 実行者の GitHub ユーザー名 |
+| Run | GitHub Actions の実行ログへのリンク |
+
+destructive changes 通知には delete / replace のリソース数も含みます。
+
+destroy-plan 通知は「承認待ち開始」のタイミングで送信されるため、承認者が destroy を認識して Actions 画面へアクセスするきっかけになります。
+
+### 実装上のポイント
+
+**`if: always()` で失敗時も通知する**
+
+apply / destroy の通知ステップは `if: always()` を設定しています。前段の terraform apply が失敗しても通知ステップが必ず実行されるため、失敗を見逃しません。
+
+```yaml
+- name: Notify Slack apply result
+  if: always()
+  continue-on-error: true
+```
+
+**`continue-on-error: true` で通知失敗を無害化する**
+
+Slack API の一時的な障害や Secret の未設定が原因で通知ステップが失敗しても、workflow 全体への影響を防ぎます。
+
+**`unfurl_links: false` でリンクカード展開を抑制する**
+
+GitHub Actions の URL を貼るとリンクカードが展開されて通知が大きくなるため、全通知に `unfurl_links: false` / `unfurl_media: false` を設定しています。
+
+**destructive detection の順序（dev / prod 共通）**
+
+```
+terraform plan -out=tfplan
+  ↓
+terraform show -json tfplan > tfplan.json
+destructive detection（delete / replace 件数をカウント）
+  ↓
+Slack 警告通知（delete / replace が 1 件以上の場合）
+  ↓
+conftest セキュリティチェック
+  ↓
+Step Summary 表示
+  ↓
+artifact upload
+```
+
+destructive detection を conftest より先に実行することで、conftest が失敗した場合でも「削除・置換を含む危険な plan だった」という事実を Slack に残せます。
+
+**destructive changes の検知ロジック**
+
+```bash
+DELETE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete"])] | length' tfplan.json)
+REPLACE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' tfplan.json)
+```
+
+1 件以上あれば `has_destructive_changes=true` を出力し、後続の通知ステップが起動します。
+
+### Slack App のセットアップ手順
+
+1. [api.slack.com/apps](https://api.slack.com/apps) でアプリを作成
+2. **OAuth & Permissions** → **Bot Token Scopes** に `chat:write` を追加
+3. **Install to Workspace** でインストール → **Bot User OAuth Token**（`xoxb-...`）をコピー
+4. 通知先チャンネルで `/invite @ボット名` を実行
+5. GitHub Repository Secrets に以下を登録
+
+```
+SLACK_BOT_TOKEN             = xoxb-...
+SLACK_CHANNEL_ID_TERRAFORM  = C0XXXXXXXXX
+```
+
+### 疎通確認
+
+`slack-test.yml` workflow を使って、本番 workflow に組み込む前に Slack への接続を確認できます。
+
+```
+GitHub → Actions → slack-test → Run workflow
+```
