@@ -18,8 +18,12 @@ on:
         description: "Target environment (dev / stg / prod)"
         type: string
         required: true
+      stack:
+        description: "Target stack (base / data / app)"
+        type: string
+        required: true
       working_directory:
-        description: "Terraform working directory (e.g. environments/dev)"
+        description: "Terraform working directory (e.g. environments/dev/base)"
         type: string
         required: true
 
@@ -37,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ENVIRONMENT: ${{ inputs.environment }}
+      STACK: ${{ inputs.stack }}
 
     steps:
       - uses: actions/checkout@v6.0.2
@@ -107,14 +112,14 @@ jobs:
             --format table \
             --exit-code 1 \
             --output /tmp/trivy-output.txt \
-            environments/${{ env.ENVIRONMENT }}
+            environments/${{ env.ENVIRONMENT }}/${{ env.STACK }}
           TRIVY_EXIT_CODE=$?
 
           if [ "$TRIVY_EXIT_CODE" -eq 0 ]; then
-            echo "### Trivy — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Trivy — $ENVIRONMENT/$STACK ✅" >> "$GITHUB_STEP_SUMMARY"
             echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### Trivy — $ENVIRONMENT ❌" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Trivy — $ENVIRONMENT/$STACK ❌" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             cat /tmp/trivy-output.txt >> "$GITHUB_STEP_SUMMARY" || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -136,10 +141,10 @@ jobs:
         if: always()
         run: |
           if [ "${{ steps.checkov.outcome }}" = "success" ]; then
-            echo "### Checkov — $ENVIRONMENT ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Checkov — $ENVIRONMENT/$STACK ✅" >> "$GITHUB_STEP_SUMMARY"
             echo "問題は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### Checkov — $ENVIRONMENT ❌" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Checkov — $ENVIRONMENT/$STACK ❌" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             cat /tmp/checkov-output.txt >> "$GITHUB_STEP_SUMMARY" || echo "checkov did not run or did not generate an output file." >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -160,7 +165,7 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: tfcmt --var "env:$ENVIRONMENT" plan -- terraform plan -no-color -out=tfplan
+        run: tfcmt --var "env:$ENVIRONMENT" --var "stack:$STACK" plan -- terraform plan -no-color -out=tfplan
         continue-on-error: true
 
       - name: Run conftest security checks
@@ -174,7 +179,7 @@ jobs:
         if: steps.plan.outcome == 'success'
         working-directory: ${{ inputs.working_directory }}
         run: |
-          echo "### Terraform Plan — $ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Terraform Plan — $ENVIRONMENT/$STACK" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
