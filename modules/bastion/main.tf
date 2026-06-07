@@ -33,6 +33,23 @@ resource "aws_iam_role_policy_attachment" "ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_role_policy" "secrets_read" {
+  name = "${var.name_prefix}-bastion-secrets-read"
+  role = aws_iam_role.bastion.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "AllowGetDbSecret"
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = var.database_url_secret_arn
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "bastion" {
   name = "${var.name_prefix}-bastion-profile"
   role = aws_iam_role.bastion.name
