@@ -22,3 +22,15 @@ misconfigurations:
   # Bastion EC2 detailed monitoring is out of scope for this CI/CD demo.
   - id: AVD-AWS-0014
     statement: "EC2 detailed monitoring is out of scope for this CI/CD demo bastion host."
+
+  # RDS uses AWS-managed encryption key (storage_encrypted = true); CMK is out of scope for this demo.
+  - id: AVD-AWS-0079
+    statement: "Aurora cluster uses AWS-managed key encryption; CMK is not required for this CI/CD demo."
+
+  # RDS Performance Insights disabled in demo environments to reduce cost.
+  - id: AVD-AWS-0133
+    statement: "Performance Insights is disabled to reduce cost in dev/stg demo environments."
+
+  # Aurora cluster deletion protection disabled to allow destroy workflows in dev/stg.
+  - id: AVD-AWS-0343
+    statement: "Deletion protection disabled to allow terraform destroy workflows in dev/stg."
