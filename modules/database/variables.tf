@@ -1,43 +1,71 @@
 variable "name_prefix" {
-  type = string
+  description = "リソース名の先頭に付与するプレフィックス（例: ecs-demo-dev）"
+  type        = string
 }
 
 variable "vpc_id" {
-  type = string
+  description = "Aurora クラスターを配置する VPC の ID"
+  type        = string
 }
 
 variable "private_subnet_ids" {
-  type = list(string)
+  description = "Aurora サブネットグループに使用するプライベートサブネット ID のリスト"
+  type        = list(string)
 }
 
 variable "db_name" {
-  type = string
+  description = "Aurora クラスターに作成するデータベース名"
+  type        = string
 }
 
 variable "db_username" {
-  type = string
+  description = "Aurora クラスターのマスターユーザー名"
+  type        = string
+}
+
+variable "engine_version" {
+  description = "Aurora PostgreSQL エンジンバージョン（例: \"13.20\", \"16.4\"）。メジャーバージョンアップ時は engine_family と合わせて変更する"
+  type        = string
+  default     = "13.20"
+}
+
+variable "engine_family" {
+  description = "Aurora PostgreSQL パラメータグループのファミリ（例: \"aurora-postgresql13\", \"aurora-postgresql16\"）。メジャーバージョンアップ時は engine_version と合わせて変更する"
+  type        = string
+  default     = "aurora-postgresql13"
+}
+
+variable "cluster_parameter_group_name" {
+  description = "Aurora クラスターに適用するパラメータグループ名。デフォルトは AWS 管理のデフォルトパラメータグループ。メジャーバージョンアップ時は対応するバージョンのデフォルト名（例: \"default.aurora-postgresql16\"）に変更する"
+  type        = string
+  default     = "default.aurora-postgresql13"
+}
+
+variable "cluster_instance_count" {
+  description = "Aurora クラスターのインスタンス数（1 = writer のみ、2 以上 = writer + reader）"
+  type        = number
+  default     = 1
 }
 
 variable "instance_class" {
-  type    = string
-  default = "db.t3.micro"
-}
-
-variable "allocated_storage" {
-  type    = number
-  default = 20
+  description = "Aurora クラスターインスタンスのインスタンスクラス"
+  type        = string
+  default     = "db.t3.medium"
 }
 
 variable "deletion_protection" {
-  type    = bool
-  default = false
+  description = "Aurora クラスターの削除保護。本番環境では true を推奨"
+  type        = bool
+  default     = false
 }
 
 variable "backup_retention_period" {
-  type    = number
-  default = 7
+  description = "Aurora クラスターのバックアップ保持期間（日数）"
+  type        = number
+  default     = 7
 }
 
 variable "kms_key_arn" {
-  type = string
+  description = "Secrets Manager および Aurora ストレージ暗号化に使用する KMS キーの ARN"
+  type        = string
 }

@@ -40,18 +40,41 @@ jobs:
               ;;
           esac
 
-  # stg: plan + apply をリユーザブルワークフローで実行
-  apply-stg:
+  # stg: base → data → app を順番に plan + apply
+  apply-stg-base:
     needs: resolve-environment
     if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'stg'
     uses: ./.github/workflows/_reusable-terraform-apply.yml
     with:
       environment: stg
-      working_directory: environments/stg
+      stack: base
+      working_directory: environments/stg/base
       checkout_ref: ${{ github.event.pull_request.base.ref }}
     secrets: inherit
 
-  # dev: plan → artifact 保存 → 承認ゲート → apply（prod と同じフロー）
+  apply-stg-data:
+    needs: [resolve-environment, apply-stg-base]
+    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'stg'
+    uses: ./.github/workflows/_reusable-terraform-apply.yml
+    with:
+      environment: stg
+      stack: data
+      working_directory: environments/stg/data
+      checkout_ref: ${{ github.event.pull_request.base.ref }}
+    secrets: inherit
+
+  apply-stg-app:
+    needs: [resolve-environment, apply-stg-data]
+    if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'stg'
+    uses: ./.github/workflows/_reusable-terraform-apply.yml
+    with:
+      environment: stg
+      stack: app
+      working_directory: environments/stg/app
+      checkout_ref: ${{ github.event.pull_request.base.ref }}
+    secrets: inherit
+
+  # dev: base → data → app を plan → artifact 保存 → 承認ゲート → apply の順で実行
   dev-plan:
     needs: resolve-environment
     if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'dev'
@@ -84,28 +107,39 @@ jobs:
           sudo mv conftest /usr/local/bin/conftest
           conftest --version
 
-      - name: Terraform Init
-        working-directory: environments/dev
+      - name: Terraform Init — base
+        working-directory: environments/dev/base
         run: terraform init
 
-      - name: Terraform Plan
-        working-directory: environments/dev
+      - name: Terraform Plan — base
+        working-directory: environments/dev/base
         run: terraform plan -no-color -out=tfplan
 
-      - name: Detect destructive changes
-        id: destructive
-        working-directory: environments/dev
+      - name: conftest — base
+        working-directory: environments/dev/base
         run: |
           terraform show -json tfplan > tfplan.json
+          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
 
-          DELETE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete"])] | length' tfplan.json)
-          REPLACE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' tfplan.json)
+      - name: Show plan in Step Summary — base
+        working-directory: environments/dev/base
+        run: |
+          echo "### Terraform Plan — dev/base" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-          echo "delete_count=${DELETE_COUNT}" >> "$GITHUB_OUTPUT"
-          echo "replace_count=${REPLACE_COUNT}" >> "$GITHUB_OUTPUT"
-
-          if [ "$DELETE_COUNT" -gt 0 ] || [ "$REPLACE_COUNT" -gt 0 ]; then
-            echo "has_destructive_changes=true" >> "$GITHUB_OUTPUT"
+      - name: Detect destructive changes — base
+        id: destructive
+        working-directory: environments/dev/base
+        run: |
+          terraform show -json tfplan > tfplan.json
+          DELETE=$(jq '[.resource_changes[]? | select(.change.actions == ["delete"])] | length' tfplan.json)
+          REPLACE=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' tfplan.json)
+          echo "delete_count=${DELETE}"   >> "$GITHUB_OUTPUT"
+          echo "replace_count=${REPLACE}" >> "$GITHUB_OUTPUT"
+          if [ "$DELETE" -gt 0 ] || [ "$REPLACE" -gt 0 ]; then
+            echo "has_destructive_changes=true"  >> "$GITHUB_OUTPUT"
           else
             echo "has_destructive_changes=false" >> "$GITHUB_OUTPUT"
           fi
@@ -135,23 +169,11 @@ jobs:
                     *Actor:* `${{ github.actor }}`
                     *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
 
-      - name: Run conftest security checks
-        working-directory: environments/dev
-        run: conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
-
-      - name: Show plan in Step Summary
-        working-directory: environments/dev
-        run: |
-          echo "### Terraform Plan — dev" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload plan artifact
+      - name: Upload plan artifact — base
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: tfplan-dev-${{ github.run_id }}
-          path: environments/dev/tfplan
+          name: tfplan-dev-base-${{ github.run_id }}
+          path: environments/dev/base/tfplan
           retention-days: 1
           if-no-files-found: error
 
@@ -181,28 +203,50 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
-      - name: Terraform Init
-        working-directory: environments/dev
-        run: terraform init
-
-      - name: Download plan artifact
+      - name: Download plan artifact — base
         uses: actions/download-artifact@v8.0.1
         with:
-          name: tfplan-dev-${{ github.run_id }}
-          path: environments/dev
+          name: tfplan-dev-base-${{ github.run_id }}
+          path: environments/dev/base
 
-      - name: Verify plan artifact exists
-        working-directory: environments/dev
-        run: test -f tfplan
+      - name: Terraform Init — base
+        working-directory: environments/dev/base
+        run: terraform init
 
-      - name: Terraform Apply
-        working-directory: environments/dev
+      - name: Verify & Apply — base
+        working-directory: environments/dev/base
+        run: |
+          test -f tfplan
+          terraform apply -auto-approve tfplan
+
+      - name: Terraform Init — data
+        working-directory: environments/dev/data
+        run: terraform init
+
+      - name: Terraform Plan — data
+        working-directory: environments/dev/data
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Apply — data
+        working-directory: environments/dev/data
         run: terraform apply -auto-approve tfplan
 
-      - name: Show outputs
-        working-directory: environments/dev
+      - name: Terraform Init — app
+        working-directory: environments/dev/app
+        run: terraform init
+
+      - name: Terraform Plan — app
+        working-directory: environments/dev/app
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Apply — app
+        working-directory: environments/dev/app
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show outputs — app
+        working-directory: environments/dev/app
         run: |
-          echo "### Terraform Outputs — dev" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Terraform Outputs — dev/app" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"       >> "$GITHUB_STEP_SUMMARY"
           printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)" >> "$GITHUB_STEP_SUMMARY"
@@ -233,7 +277,7 @@ jobs:
                     *Actor:* `${{ github.actor }}`
                     *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
 
-  # prod: plan → artifact 保存 → 承認ゲート → apply
+  # prod: base → data → app を plan → artifact 保存 → 承認ゲート → apply の順で実行
   prod-plan:
     needs: resolve-environment
     if: github.event.pull_request.merged == true && needs.resolve-environment.outputs.environment == 'prod'
@@ -266,28 +310,88 @@ jobs:
           sudo mv conftest /usr/local/bin/conftest
           conftest --version
 
-      - name: Terraform Init
-        working-directory: environments/prod
+      - name: Terraform Init — base
+        working-directory: environments/prod/base
         run: terraform init
 
-      - name: Terraform Plan
-        working-directory: environments/prod
+      - name: Terraform Plan — base
+        working-directory: environments/prod/base
         run: terraform plan -no-color -out=tfplan
 
-      - name: Detect destructive changes
-        id: destructive
-        working-directory: environments/prod
+      - name: conftest — base
+        working-directory: environments/prod/base
         run: |
           terraform show -json tfplan > tfplan.json
+          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
 
-          DELETE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete"])] | length' tfplan.json)
-          REPLACE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' tfplan.json)
+      - name: Show plan in Step Summary — base
+        working-directory: environments/prod/base
+        run: |
+          echo "### Terraform Plan — prod/base" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-          echo "delete_count=${DELETE_COUNT}" >> "$GITHUB_OUTPUT"
-          echo "replace_count=${REPLACE_COUNT}" >> "$GITHUB_OUTPUT"
+      - name: Terraform Init — data
+        working-directory: environments/prod/data
+        run: terraform init
 
-          if [ "$DELETE_COUNT" -gt 0 ] || [ "$REPLACE_COUNT" -gt 0 ]; then
-            echo "has_destructive_changes=true" >> "$GITHUB_OUTPUT"
+      - name: Terraform Plan — data
+        working-directory: environments/prod/data
+        run: terraform plan -no-color -out=tfplan
+
+      - name: conftest — data
+        working-directory: environments/prod/data
+        run: |
+          terraform show -json tfplan > tfplan.json
+          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
+
+      - name: Show plan in Step Summary — data
+        working-directory: environments/prod/data
+        run: |
+          echo "### Terraform Plan — prod/data" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform Init — app
+        working-directory: environments/prod/app
+        run: terraform init
+
+      - name: Terraform Plan — app
+        working-directory: environments/prod/app
+        run: terraform plan -no-color -out=tfplan
+
+      - name: conftest — app
+        working-directory: environments/prod/app
+        run: |
+          terraform show -json tfplan > tfplan.json
+          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
+
+      - name: Show plan in Step Summary — app
+        working-directory: environments/prod/app
+        run: |
+          echo "### Terraform Plan — prod/app" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Detect destructive changes (all stacks)
+        id: destructive
+        run: |
+          TOTAL_DELETE=0
+          TOTAL_REPLACE=0
+          for stack in base data app; do
+            PLAN_JSON="environments/prod/${stack}/tfplan.json"
+            DELETE=$(jq '[.resource_changes[]? | select(.change.actions == ["delete"])] | length' "$PLAN_JSON")
+            REPLACE=$(jq '[.resource_changes[]? | select(.change.actions == ["delete","create"] or .change.actions == ["create","delete"])] | length' "$PLAN_JSON")
+            TOTAL_DELETE=$((TOTAL_DELETE + DELETE))
+            TOTAL_REPLACE=$((TOTAL_REPLACE + REPLACE))
+          done
+          echo "delete_count=${TOTAL_DELETE}"   >> "$GITHUB_OUTPUT"
+          echo "replace_count=${TOTAL_REPLACE}" >> "$GITHUB_OUTPUT"
+          if [ "$TOTAL_DELETE" -gt 0 ] || [ "$TOTAL_REPLACE" -gt 0 ]; then
+            echo "has_destructive_changes=true"  >> "$GITHUB_OUTPUT"
           else
             echo "has_destructive_changes=false" >> "$GITHUB_OUTPUT"
           fi
@@ -317,25 +421,14 @@ jobs:
                     *Actor:* `${{ github.actor }}`
                     *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
 
-      - name: Run conftest security checks
-        working-directory: environments/prod
-        run: |
-          terraform show -json tfplan > tfplan.json
-          conftest test tfplan.json -p "$GITHUB_WORKSPACE/policy"
-
-      - name: Show plan in Step Summary
-        working-directory: environments/prod
-        run: |
-          echo "### Terraform Plan — prod" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload plan artifact
+      - name: Upload plan artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: tfplan-prod-${{ github.run_id }}
-          path: environments/prod/tfplan
+          path: |
+            environments/prod/base/tfplan
+            environments/prod/data/tfplan
+            environments/prod/app/tfplan
           retention-days: 1
           if-no-files-found: error
 
@@ -365,28 +458,45 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
-      - name: Terraform Init
-        working-directory: environments/prod
-        run: terraform init
-
-      - name: Download plan artifact
+      - name: Download plan artifacts
         uses: actions/download-artifact@v8.0.1
         with:
           name: tfplan-prod-${{ github.run_id }}
-          path: environments/prod
 
-      - name: Verify plan artifact exists
-        working-directory: environments/prod
-        run: test -f tfplan
+      - name: Terraform Init — base
+        working-directory: environments/prod/base
+        run: terraform init
 
-      - name: Terraform Apply
-        working-directory: environments/prod
-        run: terraform apply -auto-approve tfplan
-
-      - name: Show outputs
-        working-directory: environments/prod
+      - name: Verify & Apply — base
+        working-directory: environments/prod/base
         run: |
-          echo "### Terraform Outputs — prod" >> "$GITHUB_STEP_SUMMARY"
+          test -f tfplan
+          terraform apply -auto-approve tfplan
+
+      - name: Terraform Init — data
+        working-directory: environments/prod/data
+        run: terraform init
+
+      - name: Verify & Apply — data
+        working-directory: environments/prod/data
+        run: |
+          test -f tfplan
+          terraform apply -auto-approve tfplan
+
+      - name: Terraform Init — app
+        working-directory: environments/prod/app
+        run: terraform init
+
+      - name: Verify & Apply — app
+        working-directory: environments/prod/app
+        run: |
+          test -f tfplan
+          terraform apply -auto-approve tfplan
+
+      - name: Show outputs — app
+        working-directory: environments/prod/app
+        run: |
+          echo "### Terraform Outputs — prod/app" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           printf "alb_dns_name        = %s\n" "$(terraform output -raw -no-color alb_dns_name)"       >> "$GITHUB_STEP_SUMMARY"
           printf "ecr_repository_url  = %s\n" "$(terraform output -raw -no-color ecr_repository_url)" >> "$GITHUB_STEP_SUMMARY"

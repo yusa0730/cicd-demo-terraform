@@ -239,6 +239,53 @@ bootstrap 実行時のみ使用します。apply 完了後は削除します。
 
 ---
 
+## state 分離後の workflow 変更点
+
+state を `base` / `data` / `app` に分割した後は、plan / apply / destroy の単位も stack ごとになります。
+
+### PR plan（terraform-plan.yml）
+
+```
+PR を作成 / 更新
+  ↓
+変更された stack（base / data / app）を検出
+  ↓
+各 stack で独立して plan を実行
+  ↓
+required job で全 stack の成否を集約
+```
+
+### apply（terraform-apply.yml）
+
+apply は依存順序に従い、stack ごとに順番に実行します。
+
+```
+PR マージ（develop / stg / prod）
+  ↓
+base-plan → [承認] → base-apply
+  ↓
+data-plan → [承認] → data-apply
+  ↓
+app-plan  → [承認] → app-apply
+```
+
+### destroy（terraform-destroy.yml）
+
+destroy は apply の逆順で実行します。
+
+```
+app-destroy  → [承認] → 実行
+  ↓
+data-destroy → [承認] → 実行
+  ↓
+base-destroy → [承認] → 実行
+```
+
+> 依存関係があるため、app を消す前に data / base を消すと参照エラーになります。
+> 必ず逆順で実行してください。
+
+---
+
 ## Slack 通知
 
 ### 概要

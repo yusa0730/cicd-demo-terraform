@@ -1,87 +1,59 @@
 # cicd-demo-terraform
 
-このリポジトリは ECS on Fargate + RDS + ALB のアプリケーション実行基盤を管理する Terraform repository。
+このrepositoryは ECS on Fargate + RDS + ALB のアプリケーション実行基盤を管理する Terraform repository。
 
-## 責務
+## Repository 責務
 
-**このrepoで管理する:**
+このrepoで管理する:
 - VPC / Subnet / NAT Gateway / Internet Gateway
-- ALB (Listener, Target Group, Security Group)
-- ECS (Cluster, Service, Task Definition)
-- ECR Repository
-- RDS (PostgreSQL, Security Group)
-- KMS Key
-- SSM Parameter Store
-- Secrets Manager
+- ALB / ECS / ECR
+- RDS (PostgreSQL)
+- KMS / SSM Parameter Store / Secrets Manager
 - CloudWatch Log Group
 
-**このrepoで管理しない:**
+このrepoで管理しない:
 - GitHub OIDC Provider
 - Terraform plan/apply IAM Role
 - App deploy IAM Role
 - AWS account baseline (GuardDuty, CloudTrail, Config, Security Hub)
-- AWS Organizations / account vending
 
-上記は別repoで管理する:
+別repo:
 - `cicd-demo-terraform-bootstrap` → OIDC / IAM Role
 - `cicd-demo-terraform-accounts` → Account baseline
+- `cicd-demo-backend` → application deploy / DB migration
 
-## ディレクトリ構成
+## backend repo との責務分離
 
-```
-environments/<env>/   # 環境ルートモジュール（dev / stg / prod）
-modules/              # 共有モジュール
-  alb/
-  database/
-  ecr/
-  ecs_app/
-  kms/
-  network/
-policy/               # conftest OPAポリシー
-.checkov.yml          # Checkov skip設定（理由付きのみ許可）
-```
+- DB migration は `cicd-demo-backend` の CD で ECS one-off task として実行する
+- このrepoは migration に必要な ECS Task Definition / IAM / network / Secrets / SSM 出力を提供する
+- Terraform apply 内で DB migration を実行しない
+- `local-exec` / `remote-exec` で migration や外部コマンドを実行しない
+- 詳細は [docs/backend-integration.md](docs/backend-integration.md) を参照
 
-## 重要な設計判断
+## State 分離方針
 
-- dev / stg / prod は別 AWS アカウント前提
-- `environments/<env>` を destroy しても `terraform-bootstrap` 側の IAM Role / OIDC Provider は削除されない設計を維持する
-- container_port はモジュールのデフォルト(3000)に合わせ、環境 locals で管理する
-- SSM Parameter は SecureString + CMK、ECR/CloudWatch Logs は KMS 暗号化
-- SG egress はモジュール側に書かず、環境レベルで `aws_vpc_security_group_egress_rule` を使って絞り込む
+- stack は `base` / `data` / `app` に分ける
+- apply 順序: `base` → `data` → `app`
+- destroy 順序: `app` → `data` → `base`
+- 原則 `1 PR = 1 stack`
+- state 間の値受け渡しは `terraform_remote_state` を使う
+- secret 値そのものを Terraform output に出さない
+- 詳細は [docs/state-splitting.md](docs/state-splitting.md) を参照
 
-## CI/CD ルール
+## CI/CD 方針
 
-- Terraform plan は PR で実行する（`terraform-plan` workflow）
-- Terraform apply は PR merge 後に実行する（`terraform-apply` workflow）
+- Terraform plan は PR で実行する
+- Terraform apply は PR merge 後に GitHub Actions で実行する
 - prod apply / destroy は GitHub Environment approval 必須
-- security scan (Trivy + Checkov) は必須ゲート（`continue-on-error` で逃がさない）
+- Required check は原則 `terraform-plan / required`
+- Trivy / Checkov / conftest は必須ゲートとし、理由なく skip しない
+- 詳細は [docs/cicd.md](docs/cicd.md) を参照
 
-## 変更時に必ず確認すること
+## Claude Code 禁止事項
 
-**Terraform 変更時:**
-1. `terraform fmt -recursive`
-2. `terraform validate`
-3. `terraform plan`（`tfcmt` 経由）
-4. `conftest test tfplan.json -p policy/`
-5. `trivy config --tf-vars environments/<env>/terraform.tfvars environments/<env>`
-6. `checkov -d environments/<env> --framework terraform --config-file .checkov.yml`
-
-**GitHub Actions 変更時:**
-- OIDC `sub` 条件と workflow trigger が一致しているか
-- Repository Secrets と Environment Secrets の使い分けが正しいか
-- Required checks 名が Branch Protection と一致するか
-
-**Security scan skip 追加時:**
-- skip 理由をコメントまたは `.checkov.yml` に必ず残す
-- dev 限定の例外か prod にも適用されるかを明記する
-- 沈黙 skip 禁止
-
-## 禁止事項
-
+- `terraform apply` / `terraform destroy` を直接実行しない（CI/CD 経由のみ）
+- `terraform.tfstate` を直接編集しない
+- `terraform state mv` / `state pull` / `state push` は state 分離作業として明示された手順がある場合のみ使う
+- AWS access key をコード・README・ログに書かない
 - `environments/<env>` に GitHub OIDC Provider を追加しない
 - `environments/<env>` に Terraform 実行 Role を追加しない
-- AWS access key を Terraform コードや README に書かない
-- `terraform state` を手動編集しない
-- CI を通すためだけに理由なしで Checkov / Trivy を skip しない
-- `continue-on-error: true` でセキュリティ scan を握りつぶさない
-- `terraform apply` / `terraform destroy` をこのセッション内で直接実行しない

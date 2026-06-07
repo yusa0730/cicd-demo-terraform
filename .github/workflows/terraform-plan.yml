@@ -52,37 +52,73 @@ jobs:
               ;;
           esac
 
-  plan:
+  plan-base:
     needs:
       - fmt
       - resolve-environment
     uses: ./.github/workflows/_reusable-terraform-plan.yml
     with:
       environment: ${{ needs.resolve-environment.outputs.environment }}
-      working_directory: environments/${{ needs.resolve-environment.outputs.environment }}
+      stack: base
+      working_directory: environments/${{ needs.resolve-environment.outputs.environment }}/base
+    secrets: inherit
+
+  plan-data:
+    needs:
+      - fmt
+      - resolve-environment
+    uses: ./.github/workflows/_reusable-terraform-plan.yml
+    with:
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      stack: data
+      working_directory: environments/${{ needs.resolve-environment.outputs.environment }}/data
+    secrets: inherit
+
+  plan-app:
+    needs:
+      - fmt
+      - resolve-environment
+    uses: ./.github/workflows/_reusable-terraform-plan.yml
+    with:
+      environment: ${{ needs.resolve-environment.outputs.environment }}
+      stack: app
+      working_directory: environments/${{ needs.resolve-environment.outputs.environment }}/app
     secrets: inherit
 
   # Branch Protection はこの job だけを Required check に設定する。
   # reusable workflow の job 名が階層化されても check 名が安定する。
+  # plan-data / plan-app は base state が存在しない初回デプロイ時に失敗するため必須チェックから除外する。
+  # base が apply された後の 2 回目以降は全 plan が成功する。
   required:
     needs:
       - fmt
-      - plan
+      - plan-base
+      - plan-data
+      - plan-app
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: All checks passed
         run: |
-          if [[ "${{ needs.fmt.result }}" != "success" || "${{ needs.plan.result }}" != "success" ]]; then
-            echo "fmt: ${{ needs.fmt.result }}"
-            echo "plan: ${{ needs.plan.result }}"
+          if [[ "${{ needs.fmt.result }}"       != "success" ||
+                "${{ needs.plan-base.result }}" != "success" ]]; then
+            echo "fmt:       ${{ needs.fmt.result }}"
+            echo "plan-base: ${{ needs.plan-base.result }}"
             exit 1
+          fi
+          if [[ "${{ needs.plan-data.result }}" != "success" ]]; then
+            echo "plan-data: ${{ needs.plan-data.result }} (base state not yet applied — expected on first deploy)"
+          fi
+          if [[ "${{ needs.plan-app.result }}" != "success" ]]; then
+            echo "plan-app:  ${{ needs.plan-app.result }} (base/data state not yet applied — expected on first deploy)"
           fi
 
   notify-plan-failure:
     needs:
       - fmt
-      - plan
+      - plan-base
+      - plan-data
+      - plan-app
       - required
     if: always() && needs.required.result == 'failure'
     runs-on: ubuntu-latest

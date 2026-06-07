@@ -13,25 +13,51 @@ This is a multi-repo IaC setup for ECS on Fargate + RDS + ALB:
 - `cicd-demo-terraform-bootstrap`: GitHub OIDC Provider + IAM Roles
 - `cicd-demo-terraform-accounts`: AWS account baseline
 
+## Directory Structure
+
+Each environment is split into three independent Terraform stacks:
+
+```
+environments/<env>/
+  base/   # KMS / VPC / Subnet / NAT Gateway
+  data/   # RDS / Secrets Manager
+  app/    # ECR / ALB / ECS / SSM Parameters / SG rules
+```
+
 ## Review Focus
 
 ### Module boundary
-- `environments/<env>/` is the root module — environment-specific wiring goes here
-- `modules/` are reusable — no environment-specific logic in modules
-- egress rules belong in `environments/<env>/main.tf` (avoid circular SG dependency)
-- KMS key is created in `module.kms` and passed to ECR, ECS, SSM
+
+- `environments/<env>/<stack>/` is the root module for each stack
+- Stacks are `base`, `data`, `app`
+- `modules/` are reusable and must not contain environment-specific logic
+- Cross-stack SG rules (e.g., ECS SG → RDS SG) belong in `environments/<env>/app/main.tf`
+- `base` owns KMS and network
+- `data` owns RDS and database secrets
+- `app` owns ALB, ECS, ECR, SSM outputs, and app-facing SG rules
+
+### Cross-stack references
+
+- `data` reads `base` outputs via `terraform_remote_state`
+- `app` reads both `base` and `data` outputs via `terraform_remote_state`
+- Secret values (passwords, connection strings) must NOT appear in outputs
 
 ### State / backend safety
-- Each environment has its own backend and state file
-- Never suggest merging states across environments
+
+- Each stack has its own S3 backend key: `ecs-demo/<env>/<stack>/terraform.tfstate`
+- Never suggest merging states across stacks or environments
 - Always identify required `terraform state mv` or import operations when resource addresses change
+- State migration requires an explicit backup (`terraform state pull`) before any `state mv`
 
 ### destroy safety
-- `terraform destroy` of `environments/<env>` must NOT affect bootstrap IAM Roles or OIDC Provider
+
+- `terraform destroy` of `environments/<env>/app` must NOT affect `base` or `data`
+- `terraform destroy` of any stack must NOT affect bootstrap IAM Roles or OIDC Provider
 - Flag any plan that includes `aws_iam_openid_connect_provider`, `aws_iam_role` (bootstrap), or `aws_kms_key` destroy
 - RDS replace must be called out explicitly (data loss risk)
 
 ### IAM ownership
+
 - Do not put GitHub OIDC Provider or Terraform execution Roles into `environments/<env>`
 - Those belong in `cicd-demo-terraform-bootstrap`
 

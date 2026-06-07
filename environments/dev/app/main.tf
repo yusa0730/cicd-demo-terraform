@@ -1,0 +1,172 @@
+locals {
+  name_prefix    = "${var.project}-${var.env}"
+  ssm_prefix     = "/${var.project}/${var.env}"
+  container_port = 3000
+}
+
+data "terraform_remote_state" "base" {
+  backend = "s3"
+  config = {
+    bucket = "cicd-demo-terraform-dev"
+    key    = "ecs-demo/dev/base/terraform.tfstate"
+    region = "ap-northeast-1"
+  }
+  # Defaults allow plan to succeed before base stack is first applied (bootstrapping).
+  defaults = {
+    kms_key_arn        = ""
+    vpc_id             = ""
+    public_subnet_ids  = [""]
+    private_subnet_ids = ["", ""]
+  }
+}
+
+data "terraform_remote_state" "data" {
+  backend = "s3"
+  config = {
+    bucket = "cicd-demo-terraform-dev"
+    key    = "ecs-demo/dev/data/terraform.tfstate"
+    region = "ap-northeast-1"
+  }
+  # Defaults allow plan to succeed before data stack is first applied (bootstrapping).
+  defaults = {
+    database_url_secret_arn = ""
+    rds_security_group_id   = ""
+  }
+}
+
+module "ecr" {
+  source = "../../../modules/ecr"
+
+  name_prefix = local.name_prefix
+  kms_key_arn = data.terraform_remote_state.base.outputs.kms_key_arn
+}
+
+module "alb" {
+  source = "../../../modules/alb"
+
+  name_prefix       = local.name_prefix
+  vpc_id            = data.terraform_remote_state.base.outputs.vpc_id
+  public_subnet_ids = data.terraform_remote_state.base.outputs.public_subnet_ids
+  container_port    = local.container_port
+}
+
+module "bastion" {
+  source = "../../../modules/bastion"
+
+  name_prefix = local.name_prefix
+  vpc_id      = data.terraform_remote_state.base.outputs.vpc_id
+  subnet_id   = data.terraform_remote_state.base.outputs.private_subnet_ids[0]
+}
+
+module "ecs_app" {
+  source = "../../../modules/ecs_app"
+
+  name_prefix           = local.name_prefix
+  aws_region            = var.aws_region
+  vpc_id                = data.terraform_remote_state.base.outputs.vpc_id
+  private_subnet_ids    = data.terraform_remote_state.base.outputs.private_subnet_ids
+  alb_security_group_id = module.alb.alb_security_group_id
+  target_group_arn      = module.alb.target_group_arn
+  container_port        = local.container_port
+  kms_key_arn           = data.terraform_remote_state.base.outputs.kms_key_arn
+
+  app_image_uri           = var.app_image_uri
+  database_url_secret_arn = data.terraform_remote_state.data.outputs.database_url_secret_arn
+
+  task_cpu      = var.task_cpu
+  task_memory   = var.task_memory
+  desired_count = var.desired_count
+}
+
+# Break circular SG dependency: ecs_app creates ECS SG, database creates RDS SG,
+# and we wire the ingress rule here after both are known.
+resource "aws_security_group_rule" "ecs_to_rds" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = module.ecs_app.ecs_security_group_id
+  security_group_id        = data.terraform_remote_state.data.outputs.rds_security_group_id
+  description              = "Allow PostgreSQL from ECS tasks"
+}
+
+# Egress rules defined here to avoid circular SG dependencies in modules.
+resource "aws_vpc_security_group_egress_rule" "alb_to_ecs" {
+  security_group_id            = module.alb.alb_security_group_id
+  referenced_security_group_id = module.ecs_app.ecs_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = local.container_port
+  to_port                      = local.container_port
+  description                  = "Allow ALB to ECS tasks"
+}
+
+resource "aws_vpc_security_group_egress_rule" "ecs_to_rds" {
+  security_group_id            = module.ecs_app.ecs_security_group_id
+  referenced_security_group_id = data.terraform_remote_state.data.outputs.rds_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 5432
+  to_port                      = 5432
+  description                  = "Allow ECS tasks to PostgreSQL"
+}
+
+resource "aws_vpc_security_group_egress_rule" "ecs_to_https" {
+  security_group_id = module.ecs_app.ecs_security_group_id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  description       = "Allow HTTPS outbound for AWS APIs and image pulls"
+}
+
+# Bastion SG rules — egress defined here to follow the same circular-dependency pattern
+resource "aws_vpc_security_group_egress_rule" "bastion_to_https" {
+  security_group_id = module.bastion.security_group_id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  description       = "Allow HTTPS outbound for SSM Session Manager"
+}
+
+resource "aws_vpc_security_group_egress_rule" "bastion_to_rds" {
+  security_group_id            = module.bastion.security_group_id
+  referenced_security_group_id = data.terraform_remote_state.data.outputs.rds_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 5432
+  to_port                      = 5432
+  description                  = "Allow PostgreSQL from bastion to Aurora"
+}
+
+resource "aws_security_group_rule" "bastion_to_rds" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = module.bastion.security_group_id
+  security_group_id        = data.terraform_remote_state.data.outputs.rds_security_group_id
+  description              = "Allow PostgreSQL from bastion"
+}
+
+# SSM Parameter Store — values published for app-repo CI to consume
+locals {
+  ssm_params = {
+    ecr-repository-url     = module.ecr.repository_url
+    ecs-cluster-name       = module.ecs_app.cluster_name
+    ecs-service-name       = module.ecs_app.service_name
+    task-definition-family = module.ecs_app.task_definition_family
+    migration-task-def-arn = module.ecs_app.migration_task_definition_arn
+    ecs-subnet-ids         = join(",", data.terraform_remote_state.base.outputs.private_subnet_ids)
+    ecs-security-group-id  = module.ecs_app.ecs_security_group_id
+    alb-dns-name           = module.alb.alb_dns_name
+    bastion-instance-id    = module.bastion.instance_id
+  }
+}
+
+resource "aws_ssm_parameter" "infra" {
+  for_each = local.ssm_params
+
+  name   = "${local.ssm_prefix}/${each.key}"
+  type   = "SecureString"
+  value  = each.value
+  key_id = data.terraform_remote_state.base.outputs.kms_key_arn
+}

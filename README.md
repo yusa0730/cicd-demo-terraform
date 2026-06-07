@@ -24,6 +24,52 @@ GitHub Actions → AWS 認証に使う IAM ロールと OIDC Provider は `terra
 
 ---
 
+## Terraform State 分離設計
+
+### State レイヤー構成
+
+`environments/<env>` は以下の 3 レイヤーに分割します。
+各レイヤーが独立した S3 バックエンドキーを持ち、ライフサイクルが異なるリソースを分離します。
+
+| レイヤー | ディレクトリ | 管理リソース | S3 バックエンドキー |
+|---------|-------------|-------------|-------------------|
+| `base`  | `environments/<env>/base/` | KMS, VPC/Network | `ecs-demo/<env>/base/terraform.tfstate` |
+| `data`  | `environments/<env>/data/` | RDS, Secrets Manager | `ecs-demo/<env>/data/terraform.tfstate` |
+| `app`   | `environments/<env>/app/`  | ECR, ALB, ECS, SSM params, SG rules | `ecs-demo/<env>/app/terraform.tfstate` |
+
+### クロス State 参照
+
+`data` と `app` は `terraform_remote_state` で上位レイヤーの出力を参照します。
+
+```
+base  →  data  (vpc_id, private_subnet_ids, kms_key_arn)
+base  →  app   (vpc_id, public/private_subnet_ids, kms_key_arn)
+data  →  app   (database_url_secret_arn, rds_security_group_id)
+```
+
+### Apply 順序
+
+State 間に依存があるため、apply は以下の順で実行します。
+
+```
+1. environments/<env>/base/   ← KMS + Network
+2. environments/<env>/data/   ← RDS (base の output を参照)
+3. environments/<env>/app/    ← ECR / ALB / ECS (base + data の output を参照)
+```
+
+destroy は apply の逆順（app → data → base）で実行します。
+
+### 現行 State との関係
+
+`environments/<env>/` 直下の単一 State（`ecs-demo/<env>/terraform.tfstate`）は現在も稼働中です。
+`base` / `data` / `app` への移行（State 分割）は段階的に行います。
+
+- **PR 1（このブランチ）**: `base` / `data` / `app` ディレクトリの作成（ファイル追加のみ、既存 State 変更なし）
+- **PR 2**: `terraform state mv` による State 移行 + workflow 更新（dev）
+- **PR 3**: stg / prod への展開
+
+---
+
 ## はじめに
 
 このリポジトリを初めて使うときは、以下の手順で環境を構築してください。
@@ -171,3 +217,5 @@ git push -u origin develop
 |------------|------|
 | [アーキテクチャ](docs/architecture.md) | AWS 構成・ネットワーク・ECS・RDS・IAM の詳細 |
 | [CI/CD](docs/cicd.md) | Workflows 一覧・Secrets 一覧・destroy 手順 |
+| [State 分離](docs/state-splitting.md) | base/data/app の構成・apply 順序・移行手順 |
+| [backend repo 連携](docs/backend-integration.md) | DB migration の責務分離・SSM Parameter 一覧・IAM 権限 |

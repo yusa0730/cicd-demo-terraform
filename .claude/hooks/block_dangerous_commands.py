@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Pre-tool hook: blocks dangerous shell commands before Claude executes them.
-Exit code 2 = block the command (Claude Code interprets this as "blocked by hook").
+PreToolUse hook: blocks dangerous shell commands before Claude executes them.
+Exit 2 = block. Error message goes to stderr so Claude can read it.
 """
 import json
+import re
 import sys
 
 try:
@@ -14,33 +15,69 @@ except Exception:
 command = payload.get("tool_input", {}).get("command", "")
 
 BLOCKED_PATTERNS = [
-    ("terraform apply", "Use CI/CD pipeline for apply operations"),
-    ("terraform destroy", "Use CI/CD pipeline for destroy operations"),
-    ("terraform state rm", "Manual state removal requires explicit authorization"),
-    ("terraform state push", "Manual state push requires explicit authorization"),
-    ("terraform state mv", "Manual state move requires explicit authorization"),
-    ("terraform force-unlock", "Force unlock requires explicit authorization"),
-    ("aws iam delete-role", "IAM role deletion requires explicit authorization"),
-    ("aws iam put-role-policy", "IAM policy modification requires explicit authorization"),
-    ("aws iam attach-role-policy", "IAM policy modification requires explicit authorization"),
-    ("aws iam detach-role-policy", "IAM policy modification requires explicit authorization"),
-    ("aws kms delete-key", "KMS key deletion is irreversible"),
-    ("aws kms disable-key", "KMS key disable can break encrypted resources"),
-    ("aws s3 rb", "S3 bucket removal requires explicit authorization"),
-    ("git push --force", "Force push is not allowed"),
-    ("git push -f ", "Force push is not allowed"),
-    ("git reset --hard", "Hard reset discards uncommitted work"),
-    ("git clean -f", "Force clean discards uncommitted files"),
-    ("rm -rf /", "Recursive removal from root is not allowed"),
+    (
+        r"\bterraform\s+(?:-[^\s]+\s+)*apply\b",
+        "Use the CI/CD pipeline (GitHub Actions) for apply operations",
+    ),
+    (
+        r"\bterraform\s+(?:-[^\s]+\s+)*destroy\b",
+        "Use the CI/CD pipeline (GitHub Actions) for destroy operations",
+    ),
+    (
+        r"\bterraform\s+state\s+(rm|push|mv)\b",
+        "Manual state changes require an explicit migration procedure — back up state first",
+    ),
+    (
+        r"\bterraform\s+force-unlock\b",
+        "Force unlock requires explicit authorization",
+    ),
+    (
+        r"\bterraform\s+import\b",
+        "terraform import requires explicit authorization",
+    ),
+    (
+        r"\baws\s+iam\s+delete-role\b",
+        "IAM role deletion requires explicit authorization",
+    ),
+    (
+        r"\baws\s+iam\s+(put-role-policy|attach-role-policy|detach-role-policy)\b",
+        "IAM policy modification requires explicit authorization",
+    ),
+    (
+        r"\baws\s+kms\s+(delete-key|disable-key)\b",
+        "KMS key deletion/disable can break encrypted resources and is irreversible",
+    ),
+    (
+        r"\baws\s+s3\s+rb\b",
+        "S3 bucket removal requires explicit authorization",
+    ),
+    (
+        r"\baws\s+s3\s+rm\b",
+        "S3 object removal requires explicit authorization",
+    ),
+    (
+        r"\bgit\s+push\s+(--force|-f)\b",
+        "Force push is not allowed",
+    ),
+    (
+        r"\bgit\s+reset\s+--hard\b",
+        "Hard reset discards uncommitted work",
+    ),
+    (
+        r"\bgit\s+clean\s+-f\b",
+        "Force clean discards uncommitted files",
+    ),
+    (
+        r"\brm\s+-rf\s+/",
+        "Recursive removal from root is not allowed",
+    ),
 ]
 
 for pattern, reason in BLOCKED_PATTERNS:
-    if pattern in command:
+    if re.search(pattern, command):
         print(
-            json.dumps({
-                "decision": "block",
-                "reason": f"Blocked: '{pattern}' — {reason}. Use the CI/CD pipeline or perform this action manually."
-            })
+            f"Blocked: '{pattern}' matched — {reason}.",
+            file=sys.stderr,
         )
         sys.exit(2)
 

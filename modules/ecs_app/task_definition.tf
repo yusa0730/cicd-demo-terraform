@@ -42,7 +42,7 @@ resource "aws_ecs_task_definition" "app" {
 
   container_definitions = jsonencode([
     merge(local.container_base, {
-      command = ["npm", "run", "start"]
+      command = ["npm", "run", "start:prod"]
     })
   ])
 }
@@ -59,7 +59,7 @@ resource "aws_ecs_task_definition" "migration" {
 
   container_definitions = jsonencode([
     merge(local.container_base, {
-      command = ["npm", "run", "migrate"]
+      command = ["npm", "run", "migrate:prod"]
     })
   ])
 }

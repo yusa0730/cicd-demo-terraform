@@ -70,7 +70,7 @@ ALB SG   → ECS SG (container_port inbound from ALB SG)
 ECS SG   → RDS SG (5432/tcp inbound from ECS SG)
 ```
 
-> ECS SG と RDS SG の間の ingress rule は環境ルート (`environments/*/main.tf`) で定義します。
+> ECS SG と RDS SG の間の ingress rule は `environments/*/app/main.tf` で定義します。
 > これは ecs_app モジュールと database モジュールの循環依存を避けるための設計です。
 
 ## ECS
@@ -118,9 +118,13 @@ ECS SG   → RDS SG (5432/tcp inbound from ECS SG)
 
 | シークレット名 | 内容 |
 |-------------|------|
-| `{prefix}/database-url` | `postgresql://user:pass@host:5432/dbname?sslmode=require` 形式の接続文字列 |
+| `{prefix}/database-url` | `postgresql://user:pass@host:5432/dbname` 形式の接続文字列（sslmode は付けない） |
 
 ECS タスク起動時に環境変数 `DATABASE_URL` としてコンテナに注入されます。
+
+> **TLS 接続について**: `sslmode=require` を接続文字列に付けると、Node.js pg の `ssl.ca` オプションと競合して `SELF_SIGNED_CERT_IN_CHAIN` エラーが発生します。
+> TLS 検証は接続文字列ではなく、Dockerfile で RDS CA bundle（`ap-northeast-1-bundle.pem`）を組み込み、
+> アプリ側で `PGSSLROOTCERT` 環境変数を参照する方式で行います。
 
 ## SSM Parameter Store
 
@@ -181,6 +185,7 @@ S3 state バケット（`cicd-demo-terraform-{env}`）は bootstrap workflow の
 
 ```
 modules/
+├── kms/        KMS カスタマーキー
 ├── network/    VPC・サブネット・IGW・NAT Gateway・ルートテーブル
 ├── alb/        ALB・ターゲットグループ・リスナー・セキュリティグループ
 ├── ecr/        ECR リポジトリ
@@ -188,8 +193,17 @@ modules/
 └── database/   RDS インスタンス・Secrets Manager・セキュリティグループ
 ```
 
-各環境 (`environments/dev`, `stg`, `prod`) はこれらのモジュールを組み合わせて構成します。
-ECS SG → RDS SG の ingress rule のみ、循環依存を避けるために環境ルートで定義します。
+各環境は `base` / `data` / `app` の 3 つの独立した Terraform state に分割します。
+
+```
+environments/<env>/
+  base/   → modules/kms + modules/network
+  data/   → modules/database（base の output を terraform_remote_state で参照）
+  app/    → modules/ecr + modules/alb + modules/ecs_app + SSM params + SG rules
+            （base + data の output を terraform_remote_state で参照）
+```
+
+ECS SG → RDS SG の ingress rule は `environments/<env>/app/main.tf` で定義します（循環依存回避）。
 
 ## アカウントセキュリティベースライン
 
