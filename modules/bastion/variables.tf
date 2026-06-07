@@ -18,3 +18,8 @@ variable "instance_type" {
   type        = string
   default     = "t3.nano"
 }
+
+variable "database_url_secret_arn" {
+  description = "Aurora 接続情報を格納した Secrets Manager シークレットの ARN（bastion から psql 接続する際に参照）"
+  type        = string
+}

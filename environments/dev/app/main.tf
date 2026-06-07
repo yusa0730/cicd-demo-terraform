@@ -53,9 +53,10 @@ module "alb" {
 module "bastion" {
   source = "../../../modules/bastion"
 
-  name_prefix = local.name_prefix
-  vpc_id      = data.terraform_remote_state.base.outputs.vpc_id
-  subnet_id   = data.terraform_remote_state.base.outputs.private_subnet_ids[0]
+  name_prefix             = local.name_prefix
+  vpc_id                  = data.terraform_remote_state.base.outputs.vpc_id
+  subnet_id               = data.terraform_remote_state.base.outputs.private_subnet_ids[0]
+  database_url_secret_arn = data.terraform_remote_state.data.outputs.database_url_secret_arn
 }
 
 module "ecs_app" {
