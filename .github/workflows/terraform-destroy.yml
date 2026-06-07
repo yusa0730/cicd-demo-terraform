@@ -204,30 +204,22 @@ jobs:
       - name: Empty ECR repository before destroy
         run: |
           set -euo pipefail
-          ECR_URL=$(aws ssm get-parameter \
-            --name "/ecs-demo/${ENVIRONMENT}/ecr-repository-url" \
-            --with-decryption \
-            --query "Parameter.Value" --output text 2>/dev/null || echo "")
+          # 命名規則からリポジトリ名を導出（SSMに依存しない）
+          ECR_REPO_NAME="ecs-demo-${ENVIRONMENT}"
 
-          if [ -z "$ECR_URL" ]; then
-            echo "SSM parameter not found — skipping ECR cleanup"
-            exit 0
-          fi
-
-          ECR_REPO_NAME="$(basename "$ECR_URL")"
           IMAGE_IDS=$(aws ecr list-images \
             --repository-name "$ECR_REPO_NAME" \
-            --query 'imageIds[*]' --output json)
+            --no-paginate \
+            --query 'imageIds[*]' --output json 2>/dev/null || echo "[]")
 
-          if [ "$IMAGE_IDS" = "[]" ] || [ -z "$IMAGE_IDS" ]; then
+          if [ -z "$IMAGE_IDS" ] || [ "$IMAGE_IDS" = "[]" ] || [ "$IMAGE_IDS" = "null" ]; then
             echo "No images to delete in $ECR_REPO_NAME"
             exit 0
           fi
 
           echo "Deleting all images from $ECR_REPO_NAME..."
           aws ecr batch-delete-image \
-            --repository-name "$ECR_REPO_NAME" \
-            --image-ids "$IMAGE_IDS"
+            --cli-input-json "{\"repositoryName\":\"${ECR_REPO_NAME}\",\"imageIds\":${IMAGE_IDS}}"
           echo "ECR cleanup complete"
 
       - name: Terraform Init + Destroy (app)
@@ -398,30 +390,22 @@ jobs:
       - name: Empty ECR repository before destroy
         run: |
           set -euo pipefail
-          ECR_URL=$(aws ssm get-parameter \
-            --name "/ecs-demo/${ENVIRONMENT}/ecr-repository-url" \
-            --with-decryption \
-            --query "Parameter.Value" --output text 2>/dev/null || echo "")
+          # 命名規則からリポジトリ名を導出（SSMに依存しない）
+          ECR_REPO_NAME="ecs-demo-${ENVIRONMENT}"
 
-          if [ -z "$ECR_URL" ]; then
-            echo "SSM parameter not found — skipping ECR cleanup"
-            exit 0
-          fi
-
-          ECR_REPO_NAME="$(basename "$ECR_URL")"
           IMAGE_IDS=$(aws ecr list-images \
             --repository-name "$ECR_REPO_NAME" \
-            --query 'imageIds[*]' --output json)
+            --no-paginate \
+            --query 'imageIds[*]' --output json 2>/dev/null || echo "[]")
 
-          if [ "$IMAGE_IDS" = "[]" ] || [ -z "$IMAGE_IDS" ]; then
+          if [ -z "$IMAGE_IDS" ] || [ "$IMAGE_IDS" = "[]" ] || [ "$IMAGE_IDS" = "null" ]; then
             echo "No images to delete in $ECR_REPO_NAME"
             exit 0
           fi
 
           echo "Deleting all images from $ECR_REPO_NAME..."
           aws ecr batch-delete-image \
-            --repository-name "$ECR_REPO_NAME" \
-            --image-ids "$IMAGE_IDS"
+            --cli-input-json "{\"repositoryName\":\"${ECR_REPO_NAME}\",\"imageIds\":${IMAGE_IDS}}"
           echo "ECR cleanup complete"
 
       - name: Download destroy plan artifact
