@@ -162,6 +162,7 @@ jobs:
           set -euo pipefail
           ECR_URL=$(aws ssm get-parameter \
             --name "/ecs-demo/${ENVIRONMENT}/ecr-repository-url" \
+            --with-decryption \
             --query "Parameter.Value" --output text 2>/dev/null || echo "")
 
           if [ -z "$ECR_URL" ]; then
@@ -355,6 +356,7 @@ jobs:
           set -euo pipefail
           ECR_URL=$(aws ssm get-parameter \
             --name "/ecs-demo/${ENVIRONMENT}/ecr-repository-url" \
+            --with-decryption \
             --query "Parameter.Value" --output text 2>/dev/null || echo "")
 
           if [ -z "$ECR_URL" ]; then
