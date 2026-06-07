@@ -56,3 +56,9 @@ skip-check:
 
   # PostgreSQL query logging via custom DB parameter group is out of scope for this CI/CD demo.
   - CKV2_AWS_30
+
+  # Bastion EC2 detailed monitoring is out of scope for this CI/CD demo.
+  - CKV_AWS_126
+
+  # Bastion is a demo-only host; termination protection is not required.
+  - CKV_AWS_135

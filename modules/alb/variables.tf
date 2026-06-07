@@ -16,6 +16,7 @@ variable "container_port" {
 }
 
 variable "health_check_path" {
-  type    = string
-  default = "/health"
+  description = "ALB ターゲットグループのヘルスチェックパス"
+  type        = string
+  default     = "/health-check"
 }

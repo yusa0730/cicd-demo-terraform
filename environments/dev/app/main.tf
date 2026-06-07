@@ -38,6 +38,14 @@ module "alb" {
   container_port    = local.container_port
 }
 
+module "bastion" {
+  source = "../../../modules/bastion"
+
+  name_prefix = local.name_prefix
+  vpc_id      = data.terraform_remote_state.base.outputs.vpc_id
+  subnet_id   = data.terraform_remote_state.base.outputs.private_subnet_ids[0]
+}
+
 module "ecs_app" {
   source = "../../../modules/ecs_app"
 
@@ -98,6 +106,35 @@ resource "aws_vpc_security_group_egress_rule" "ecs_to_https" {
   description       = "Allow HTTPS outbound for AWS APIs and image pulls"
 }
 
+# Bastion SG rules — egress defined here to follow the same circular-dependency pattern
+resource "aws_vpc_security_group_egress_rule" "bastion_to_https" {
+  security_group_id = module.bastion.security_group_id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  description       = "Allow HTTPS outbound for SSM Session Manager"
+}
+
+resource "aws_vpc_security_group_egress_rule" "bastion_to_rds" {
+  security_group_id            = module.bastion.security_group_id
+  referenced_security_group_id = data.terraform_remote_state.data.outputs.rds_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 5432
+  to_port                      = 5432
+  description                  = "Allow PostgreSQL from bastion to Aurora"
+}
+
+resource "aws_security_group_rule" "bastion_to_rds" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = module.bastion.security_group_id
+  security_group_id        = data.terraform_remote_state.data.outputs.rds_security_group_id
+  description              = "Allow PostgreSQL from bastion"
+}
+
 # SSM Parameter Store — values published for app-repo CI to consume
 locals {
   ssm_params = {
@@ -109,6 +146,7 @@ locals {
     ecs-subnet-ids         = join(",", data.terraform_remote_state.base.outputs.private_subnet_ids)
     ecs-security-group-id  = module.ecs_app.ecs_security_group_id
     alb-dns-name           = module.alb.alb_dns_name
+    bastion-instance-id    = module.bastion.instance_id
   }
 }
 
