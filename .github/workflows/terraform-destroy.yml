@@ -61,8 +61,178 @@ jobs:
               ;;
           esac
 
+  # ── dev: app スタックのみ plan して削除内容を確認 ─────────────────────────
+  destroy-plan-dev:
+    needs: validate-input
+    if: needs.validate-input.outputs.environment == 'dev'
+    runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ needs.validate-input.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.1
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_DEV }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: "1.15.3"
+          terraform_wrapper: false
+
+      - name: Terraform Init (app)
+        working-directory: environments/${{ env.ENVIRONMENT }}/app
+        run: terraform init
+
+      - name: Terraform Destroy Plan (app)
+        working-directory: environments/${{ env.ENVIRONMENT }}/app
+        run: terraform plan -destroy -no-color -out=tfplan
+
+      - name: Summarize deletion count
+        working-directory: environments/${{ env.ENVIRONMENT }}/app
+        run: |
+          DELETE_COUNT=$(terraform show -json tfplan \
+            | jq '[.resource_changes[] | select(.change.actions[] | contains("delete"))] | length')
+          echo "### Terraform Destroy Plan — $ENVIRONMENT (app stack preview)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 項目 | 値 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| app スタック削除リソース数 | $DELETE_COUNT |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify Slack destroy plan created
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v3.0.3
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
+            text: "Terraform destroy plan created — ${{ env.ENVIRONMENT }}"
+            unfurl_links: false
+            unfurl_media: false
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: |
+                    :rotating_light: *Terraform destroy plan created — awaiting approval*
+                    *Environment:* `${{ env.ENVIRONMENT }}`
+                    *Repository:* `${{ github.repository }}`
+                    *Actor:* `${{ github.actor }}`
+                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
+
+  # ── dev: app → data → base の順に destroy ────────────────────────────────
+  destroy-apply-dev:
+    needs:
+      - validate-input
+      - destroy-plan-dev
+    if: needs.validate-input.outputs.environment == 'dev'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.validate-input.outputs.environment }}
+
+    env:
+      ENVIRONMENT: ${{ needs.validate-input.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.1
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: "1.15.3"
+          terraform_wrapper: false
+
+      - name: Empty ECR repository before destroy
+        run: |
+          set -euo pipefail
+          ECR_URL=$(aws ssm get-parameter \
+            --name "/ecs-demo/${ENVIRONMENT}/ecr-repository-url" \
+            --query "Parameter.Value" --output text 2>/dev/null || echo "")
+
+          if [ -z "$ECR_URL" ]; then
+            echo "SSM parameter not found — skipping ECR cleanup"
+            exit 0
+          fi
+
+          ECR_REPO_NAME="$(basename "$ECR_URL")"
+          IMAGE_IDS=$(aws ecr list-images \
+            --repository-name "$ECR_REPO_NAME" \
+            --query 'imageIds[*]' --output json)
+
+          if [ "$IMAGE_IDS" = "[]" ] || [ -z "$IMAGE_IDS" ]; then
+            echo "No images to delete in $ECR_REPO_NAME"
+            exit 0
+          fi
+
+          echo "Deleting all images from $ECR_REPO_NAME..."
+          aws ecr batch-delete-image \
+            --repository-name "$ECR_REPO_NAME" \
+            --image-ids "$IMAGE_IDS"
+          echo "ECR cleanup complete"
+
+      - name: Terraform Init + Destroy (app)
+        working-directory: environments/${{ env.ENVIRONMENT }}/app
+        run: |
+          terraform init
+          terraform plan -destroy -no-color -out=tfplan
+          terraform apply -auto-approve tfplan
+
+      - name: Terraform Init + Destroy (data)
+        working-directory: environments/${{ env.ENVIRONMENT }}/data
+        run: |
+          terraform init
+          terraform plan -destroy -no-color -out=tfplan
+          terraform apply -auto-approve tfplan
+
+      - name: Terraform Init + Destroy (base)
+        working-directory: environments/${{ env.ENVIRONMENT }}/base
+        run: |
+          terraform init
+          terraform plan -destroy -no-color -out=tfplan
+          terraform apply -auto-approve tfplan
+
+      - name: Notify Slack destroy result
+        if: always()
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v3.0.3
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ secrets.SLACK_CHANNEL_ID_TERRAFORM }}
+            text: "Terraform destroy ${{ job.status == 'success' && 'success' || 'failure' }} — ${{ env.ENVIRONMENT }}"
+            unfurl_links: false
+            unfurl_media: false
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: |
+                    :rotating_light: *Terraform destroy ${{ job.status }}*
+                    *Environment:* `${{ env.ENVIRONMENT }}`
+                    *Repository:* `${{ github.repository }}`
+                    *Actor:* `${{ github.actor }}`
+                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
+
+  # ── stg / prod: 単一スタック plan ────────────────────────────────────────
   destroy-plan:
     needs: validate-input
+    if: needs.validate-input.outputs.environment != 'dev'
     runs-on: ubuntu-latest
 
     env:
@@ -75,7 +245,6 @@ jobs:
         id: role
         run: |
           case "$ENVIRONMENT" in
-            dev)  echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_DEV }}"  >> "$GITHUB_OUTPUT" ;;
             stg)  echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_STG }}"  >> "$GITHUB_OUTPUT" ;;
             prod) echo "arn=${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN_PROD }}" >> "$GITHUB_OUTPUT" ;;
           esac
@@ -150,14 +319,13 @@ jobs:
                     *Actor:* `${{ github.actor }}`
                     *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions>
 
+  # ── stg / prod: 単一スタック apply ───────────────────────────────────────
   destroy-apply:
     needs:
       - validate-input
       - destroy-plan
+    if: needs.validate-input.outputs.environment != 'dev'
     runs-on: ubuntu-latest
-
-    # Required reviewers を各 GitHub Environment に設定しておくこと
-    # （destroy-plan の内容を確認してから承認できる）
     environment: ${{ needs.validate-input.outputs.environment }}
 
     env:
@@ -181,6 +349,34 @@ jobs:
       - name: Terraform Init
         working-directory: environments/${{ env.ENVIRONMENT }}
         run: terraform init
+
+      - name: Empty ECR repository before destroy
+        run: |
+          set -euo pipefail
+          ECR_URL=$(aws ssm get-parameter \
+            --name "/ecs-demo/${ENVIRONMENT}/ecr-repository-url" \
+            --query "Parameter.Value" --output text 2>/dev/null || echo "")
+
+          if [ -z "$ECR_URL" ]; then
+            echo "SSM parameter not found — skipping ECR cleanup"
+            exit 0
+          fi
+
+          ECR_REPO_NAME="$(basename "$ECR_URL")"
+          IMAGE_IDS=$(aws ecr list-images \
+            --repository-name "$ECR_REPO_NAME" \
+            --query 'imageIds[*]' --output json)
+
+          if [ "$IMAGE_IDS" = "[]" ] || [ -z "$IMAGE_IDS" ]; then
+            echo "No images to delete in $ECR_REPO_NAME"
+            exit 0
+          fi
+
+          echo "Deleting all images from $ECR_REPO_NAME..."
+          aws ecr batch-delete-image \
+            --repository-name "$ECR_REPO_NAME" \
+            --image-ids "$IMAGE_IDS"
+          echo "ECR cleanup complete"
 
       - name: Download destroy plan artifact
         uses: actions/download-artifact@v8.0.1
