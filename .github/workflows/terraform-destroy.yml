@@ -157,6 +157,50 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
+      - name: Release stale state locks if exist
+        run: |
+          set -euo pipefail
+          BUCKET="cicd-demo-terraform-dev"
+
+          release_if_stale() {
+            local STACK="$1"
+            local KEY="ecs-demo/dev/${STACK}/terraform.tfstate.tflock"
+            local CONTENT
+            CONTENT=$(aws s3 cp "s3://${BUCKET}/${KEY}" - 2>/dev/null || echo "")
+            if [ -z "$CONTENT" ]; then
+              echo "[$STACK] ロックなし"
+              return
+            fi
+
+            local CREATED WHO AGE_SEC=0
+            CREATED=$(echo "$CONTENT" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('Created',''))" 2>/dev/null || echo "")
+            WHO=$(echo "$CONTENT" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('Who','unknown'))" 2>/dev/null || echo "unknown")
+
+            if [ -n "$CREATED" ]; then
+              LOCK_EPOCH=$(python3 -c "from datetime import datetime,timezone; \
+                s='$CREATED'; s=s[:26]+'Z'; \
+                dt=datetime.strptime(s,'%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc); \
+                print(int(dt.timestamp()))" 2>/dev/null || echo "0")
+              NOW_EPOCH=$(python3 -c "from datetime import datetime,timezone; \
+                print(int(datetime.now(timezone.utc).timestamp()))")
+              AGE_SEC=$((NOW_EPOCH - LOCK_EPOCH))
+            fi
+
+            echo "[$STACK] ロック検出: WHO=$WHO, AGE=${AGE_SEC}秒"
+            if [ "$AGE_SEC" -ge 3600 ]; then
+              aws s3 rm "s3://${BUCKET}/${KEY}"
+              echo "[$STACK] 1時間以上経過のため自動解除しました"
+            else
+              echo "::warning::[$STACK] ロックが存在 (AGE=${AGE_SEC}秒, WHO=$WHO)。60分未満のため自動解除しません。"
+            fi
+          }
+
+          release_if_stale "base"
+          release_if_stale "data"
+          release_if_stale "app"
+
       - name: Empty ECR repository before destroy
         run: |
           set -euo pipefail

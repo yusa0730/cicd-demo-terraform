@@ -57,6 +57,45 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
+      - name: Release stale state lock if exists
+        env:
+          BUCKET: cicd-demo-terraform-${{ inputs.environment }}
+          KEY: ecs-demo/${{ inputs.environment }}/${{ inputs.stack }}/terraform.tfstate.tflock
+        run: |
+          set -euo pipefail
+          CONTENT=$(aws s3 cp "s3://${BUCKET}/${KEY}" - 2>/dev/null || echo "")
+          if [ -z "$CONTENT" ]; then
+            echo "ロックなし — 続行"
+            exit 0
+          fi
+
+          CREATED=$(echo "$CONTENT" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin).get('Created',''))" 2>/dev/null || echo "")
+          WHO=$(echo "$CONTENT" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin).get('Who','unknown'))" 2>/dev/null || echo "unknown")
+
+          AGE_SEC=0
+          if [ -n "$CREATED" ]; then
+            LOCK_EPOCH=$(python3 -c "from datetime import datetime,timezone; \
+              s='$CREATED'; s=s[:26]+'Z'; \
+              dt=datetime.strptime(s,'%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc); \
+              print(int(dt.timestamp()))" 2>/dev/null || echo "0")
+            NOW_EPOCH=$(python3 -c "from datetime import datetime,timezone; \
+              print(int(datetime.now(timezone.utc).timestamp()))")
+            AGE_SEC=$((NOW_EPOCH - LOCK_EPOCH))
+          fi
+
+          echo "ロック検出: WHO=$WHO, AGE=${AGE_SEC}秒"
+
+          if [ "$AGE_SEC" -ge 3600 ]; then
+            echo "ロックが1時間以上経過しているため解除します"
+            aws s3 rm "s3://${BUCKET}/${KEY}"
+            echo "ロック解除完了"
+          else
+            echo "::warning::ロックが存在します (AGE=${AGE_SEC}秒, WHO=$WHO)。60分未満のため自動解除しません。"
+            echo "別のジョブが実行中の可能性があります。terraform-unlock ワークフローで手動解除してください。"
+          fi
+
       - name: Terraform Init
         working-directory: ${{ inputs.working_directory }}
         run: terraform init
