@@ -14,3 +14,7 @@ misconfigurations:
   # Deletion protection is disabled to support terraform destroy workflows in dev/stg environments.
   - id: AVD-AWS-0177
     statement: "Deletion protection disabled to allow destroy workflows in dev/stg."
+
+  # Aurora Backtrack は Aurora MySQL のみサポート。Aurora PostgreSQL では機能自体が存在しない。
+  - id: AVD-AWS-0080
+    statement: "Aurora Backtrack is not available for Aurora PostgreSQL; only Aurora MySQL supports this feature."

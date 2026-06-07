@@ -27,6 +27,11 @@ skip-check:
 
   # App uses password-based authentication; RDS IAM authentication not configured.
   - CKV_AWS_161
+  - CKV_AWS_128
+  - CKV_AWS_162
+
+  # Aurora Backtrack は Aurora MySQL のみサポート。Aurora PostgreSQL では使用不可。
+  - CKV_AWS_324
 
   # ECS read-only root filesystem: app container requires write access at runtime.
   - CKV_AWS_211
