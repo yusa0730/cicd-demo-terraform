@@ -44,10 +44,11 @@ module "ecr" {
 module "alb" {
   source = "../../../modules/alb"
 
-  name_prefix       = local.name_prefix
-  vpc_id            = data.terraform_remote_state.base.outputs.vpc_id
-  public_subnet_ids = data.terraform_remote_state.base.outputs.public_subnet_ids
-  container_port    = local.container_port
+  name_prefix          = local.name_prefix
+  vpc_id               = data.terraform_remote_state.base.outputs.vpc_id
+  public_subnet_ids    = data.terraform_remote_state.base.outputs.public_subnet_ids
+  container_port       = local.container_port
+  deregistration_delay = 0
 }
 
 module "bastion" {

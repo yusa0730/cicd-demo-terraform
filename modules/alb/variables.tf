@@ -20,3 +20,9 @@ variable "health_check_path" {
   type        = string
   default     = "/health-check"
 }
+
+variable "deregistration_delay" {
+  description = "ALB ターゲットグループの登録解除待機時間（秒）。dev/stg では 0 にして destroy を高速化する"
+  type        = number
+  default     = 300
+}

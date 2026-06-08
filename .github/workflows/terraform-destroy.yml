@@ -157,33 +157,111 @@ jobs:
           terraform_version: "1.15.3"
           terraform_wrapper: false
 
-      - name: Empty ECR repository before destroy
+      - name: Release stale state locks if exist
         run: |
           set -euo pipefail
-          ECR_URL=$(aws ssm get-parameter \
-            --name "/ecs-demo/${ENVIRONMENT}/ecr-repository-url" \
-            --with-decryption \
-            --query "Parameter.Value" --output text 2>/dev/null || echo "")
+          BUCKET="cicd-demo-terraform-dev"
 
-          if [ -z "$ECR_URL" ]; then
-            echo "SSM parameter not found — skipping ECR cleanup"
+          release_if_stale() {
+            local STACK="$1"
+            local KEY="ecs-demo/dev/${STACK}/terraform.tfstate.tflock"
+            local CONTENT
+            CONTENT=$(aws s3 cp "s3://${BUCKET}/${KEY}" - 2>/dev/null || echo "")
+            if [ -z "$CONTENT" ]; then
+              echo "[$STACK] ロックなし"
+              return
+            fi
+
+            local CREATED WHO AGE_SEC=0
+            CREATED=$(echo "$CONTENT" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('Created',''))" 2>/dev/null || echo "")
+            WHO=$(echo "$CONTENT" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('Who','unknown'))" 2>/dev/null || echo "unknown")
+
+            if [ -n "$CREATED" ]; then
+              LOCK_EPOCH=$(python3 -c "from datetime import datetime,timezone; \
+                s='$CREATED'; s=s[:26]+'Z'; \
+                dt=datetime.strptime(s,'%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc); \
+                print(int(dt.timestamp()))" 2>/dev/null || echo "0")
+              NOW_EPOCH=$(python3 -c "from datetime import datetime,timezone; \
+                print(int(datetime.now(timezone.utc).timestamp()))")
+              AGE_SEC=$((NOW_EPOCH - LOCK_EPOCH))
+            fi
+
+            echo "[$STACK] ロック検出: WHO=$WHO, AGE=${AGE_SEC}秒"
+            if [ "$AGE_SEC" -ge 3600 ]; then
+              aws s3 rm "s3://${BUCKET}/${KEY}"
+              echo "[$STACK] 1時間以上経過のため自動解除しました"
+            else
+              echo "::warning::[$STACK] ロックが存在 (AGE=${AGE_SEC}秒, WHO=$WHO)。60分未満のため自動解除しません。"
+            fi
+          }
+
+          release_if_stale "base"
+          release_if_stale "data"
+          release_if_stale "app"
+
+      - name: Stop running ECS tasks before destroy
+        run: |
+          set -euo pipefail
+          CLUSTER="ecs-demo-${ENVIRONMENT}-cluster"
+
+          SERVICES=$(aws ecs list-services \
+            --cluster "$CLUSTER" \
+            --query "serviceArns[]" \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$SERVICES" ]; then
+            echo "ECS サービスなし — スキップ"
             exit 0
           fi
 
-          ECR_REPO_NAME="$(basename "$ECR_URL")"
+          for SERVICE_ARN in $SERVICES; do
+            SERVICE_NAME=$(basename "$SERVICE_ARN")
+            echo "サービス: $SERVICE_NAME のタスクを停止中..."
+
+            TASKS=$(aws ecs list-tasks \
+              --cluster "$CLUSTER" \
+              --service-name "$SERVICE_NAME" \
+              --query "taskArns[]" \
+              --output text 2>/dev/null || echo "")
+
+            if [ -z "$TASKS" ]; then
+              echo "[$SERVICE_NAME] 実行中タスクなし"
+              continue
+            fi
+
+            for TASK in $TASKS; do
+              aws ecs stop-task \
+                --cluster "$CLUSTER" \
+                --task "$TASK" \
+                --reason "terraform destroy の前処理として停止" \
+                --region "$AWS_REGION" > /dev/null
+              echo "[$SERVICE_NAME] 停止: $TASK"
+            done
+          done
+
+          echo "ECS タスク停止完了"
+
+      - name: Empty ECR repository before destroy
+        run: |
+          set -euo pipefail
+          # 命名規則からリポジトリ名を導出（SSMに依存しない）
+          ECR_REPO_NAME="ecs-demo-${ENVIRONMENT}"
+
           IMAGE_IDS=$(aws ecr list-images \
             --repository-name "$ECR_REPO_NAME" \
-            --query 'imageIds[*]' --output json)
+            --no-paginate \
+            --query 'imageIds[*]' --output json 2>/dev/null || echo "[]")
 
-          if [ "$IMAGE_IDS" = "[]" ] || [ -z "$IMAGE_IDS" ]; then
+          if [ -z "$IMAGE_IDS" ] || [ "$IMAGE_IDS" = "[]" ] || [ "$IMAGE_IDS" = "null" ]; then
             echo "No images to delete in $ECR_REPO_NAME"
             exit 0
           fi
 
           echo "Deleting all images from $ECR_REPO_NAME..."
           aws ecr batch-delete-image \
-            --repository-name "$ECR_REPO_NAME" \
-            --image-ids "$IMAGE_IDS"
+            --cli-input-json "{\"repositoryName\":\"${ECR_REPO_NAME}\",\"imageIds\":${IMAGE_IDS}}"
           echo "ECR cleanup complete"
 
       - name: Terraform Init + Destroy (app)
@@ -354,30 +432,22 @@ jobs:
       - name: Empty ECR repository before destroy
         run: |
           set -euo pipefail
-          ECR_URL=$(aws ssm get-parameter \
-            --name "/ecs-demo/${ENVIRONMENT}/ecr-repository-url" \
-            --with-decryption \
-            --query "Parameter.Value" --output text 2>/dev/null || echo "")
+          # 命名規則からリポジトリ名を導出（SSMに依存しない）
+          ECR_REPO_NAME="ecs-demo-${ENVIRONMENT}"
 
-          if [ -z "$ECR_URL" ]; then
-            echo "SSM parameter not found — skipping ECR cleanup"
-            exit 0
-          fi
-
-          ECR_REPO_NAME="$(basename "$ECR_URL")"
           IMAGE_IDS=$(aws ecr list-images \
             --repository-name "$ECR_REPO_NAME" \
-            --query 'imageIds[*]' --output json)
+            --no-paginate \
+            --query 'imageIds[*]' --output json 2>/dev/null || echo "[]")
 
-          if [ "$IMAGE_IDS" = "[]" ] || [ -z "$IMAGE_IDS" ]; then
+          if [ -z "$IMAGE_IDS" ] || [ "$IMAGE_IDS" = "[]" ] || [ "$IMAGE_IDS" = "null" ]; then
             echo "No images to delete in $ECR_REPO_NAME"
             exit 0
           fi
 
           echo "Deleting all images from $ECR_REPO_NAME..."
           aws ecr batch-delete-image \
-            --repository-name "$ECR_REPO_NAME" \
-            --image-ids "$IMAGE_IDS"
+            --cli-input-json "{\"repositoryName\":\"${ECR_REPO_NAME}\",\"imageIds\":${IMAGE_IDS}}"
           echo "ECR cleanup complete"
 
       - name: Download destroy plan artifact

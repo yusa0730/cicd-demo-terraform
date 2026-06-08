@@ -1,0 +1,111 @@
+name: terraform-unlock
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "対象環境"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+        default: dev
+      stack:
+        description: "対象スタック（dev のみ base/data/app を選択。stg/prod は all を選択）"
+        required: true
+        type: choice
+        options:
+          - all
+          - base
+          - data
+          - app
+        default: all
+
+concurrency:
+  group: terraform-destroy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+jobs:
+  unlock:
+    runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+      STACK: ${{ github.event.inputs.stack }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.1
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve S3 bucket name
+        id: bucket
+        run: |
+          case "$ENVIRONMENT" in
+            dev)  echo "bucket=cicd-demo-terraform-dev"  >> "$GITHUB_OUTPUT" ;;
+            stg)  echo "bucket=cicd-demo-terraform-stg"  >> "$GITHUB_OUTPUT" ;;
+            prod) echo "bucket=cicd-demo-terraform-prod" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Remove stale lock files
+        run: |
+          set -euo pipefail
+          BUCKET="${{ steps.bucket.outputs.bucket }}"
+          PREFIX="ecs-demo/${ENVIRONMENT}"
+          REMOVED=0
+
+          remove_lock() {
+            local KEY="$1"
+            local FULL_KEY="${PREFIX}/${KEY}/terraform.tfstate.tflock"
+
+            CONTENT=$(aws s3 cp "s3://${BUCKET}/${FULL_KEY}" - 2>/dev/null || echo "")
+            if [ -z "$CONTENT" ]; then
+              echo "[$KEY] ロックファイルなし — スキップ"
+              return
+            fi
+
+            LOCK_ID=$(echo "$CONTENT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ID','unknown'))" 2>/dev/null || echo "unknown")
+            WHO=$(echo "$CONTENT"    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Who','unknown'))"  2>/dev/null || echo "unknown")
+            CREATED=$(echo "$CONTENT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Created','unknown'))" 2>/dev/null || echo "unknown")
+
+            echo "[$KEY] ロック検出"
+            echo "  ID:      $LOCK_ID"
+            echo "  Who:     $WHO"
+            echo "  Created: $CREATED"
+
+            aws s3 rm "s3://${BUCKET}/${FULL_KEY}"
+            echo "[$KEY] ロック解除完了"
+            REMOVED=$((REMOVED + 1))
+          }
+
+          if [ "$STACK" = "all" ]; then
+            if [ "$ENVIRONMENT" = "dev" ]; then
+              remove_lock "base"
+              remove_lock "data"
+              remove_lock "app"
+            else
+              remove_lock "$ENVIRONMENT"
+            fi
+          else
+            remove_lock "$STACK"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Terraform Unlock — ${ENVIRONMENT}" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 項目 | 値 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 環境 | $ENVIRONMENT |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| スタック | $STACK |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 解除したロック数 | $REMOVED |" >> "$GITHUB_STEP_SUMMARY"
